@@ -1,0 +1,23 @@
+[package]
+name = "accessd"
+version = "0.1.0"
+authors = ["cmusser@sonic.net"]
+
+[dependencies]
+clap = "2"
+nom = "^3.0"
+futures = "0.1"
+tokio-core = "0.1"
+tokio-process = "0.1.1"
+
+[lib]
+name = "access"
+path = "src/lib.rs"
+
+[[bin]]
+name = "accessd"
+path = "src/accessd.rs"
+
+[[bin]]
+name = "access"
+path = "src/access.rs"
