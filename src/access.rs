@@ -1,8 +1,11 @@
-extern crate clap;
 extern crate access;
+extern crate clap;
+extern crate sodiumoxide;
 
 use clap::App;
 use access::req::{SSH_ACCESS, AF_INET, AF_INET6};
+use access::crypto::*;
+use sodiumoxide::crypto::box_;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 
@@ -16,6 +19,9 @@ fn main() {
                               "-a, --addr=[address] 'Specify the client address'
                                -4, --prefer-ipv4 'Prefer IPv4 address'
                               <HOST>              'remote host to access'").get_matches();
+
+    let mut state = State::read(String::from("access_state.yaml"));
+    let box_keys = KeyData::read(String::from("access_keydata.yaml"));
 
     let bind_addr: &str;
     let remote_addr: SocketAddr;
@@ -66,8 +72,15 @@ fn main() {
     match s.take_error() {
         Ok(Some(error)) => println!("UdpSocket error: {:?}", error),
         Ok(None) => {
-            s.send_to(&msg, remote_addr).expect("send_to failed");
-            println!("access request sent to {} ({})", remote_str, remote_addr);
+            state.nonce.increment_le_inplace();
+            let mut payload = Vec::new();
+            payload.extend(&state.nonce[..]);
+            let encrypted_req_packet = box_::seal(&msg, &state.nonce, &box_keys.peer_public,
+                                        &box_keys.secret);
+            payload.extend(encrypted_req_packet);
+            s.send_to(&payload, remote_addr).expect("send_to failed");
+            println!("access request of len {} sent to {} ({})", payload.len(), remote_str, remote_addr);
+            state.write();
         }
         Err(error) => println!("UdpSocket.take_error failed: {:?}", error)
     }

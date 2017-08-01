@@ -5,6 +5,7 @@ extern crate access;
 extern crate tokio_core;
 extern crate tokio_process;
 extern crate futures;
+extern crate sodiumoxide;
 
 use std::cell::RefCell;
 use std::clone::Clone;
@@ -20,6 +21,9 @@ use std::time::{Duration, Instant};
 use clap::App;
 use futures::{future, Future, Stream};
 use access::req::AccessReq;
+use access::crypto::*;
+use sodiumoxide::crypto::box_;
+use sodiumoxide::crypto::box_::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
@@ -34,6 +38,30 @@ enum TimeoutCompleteAction {
     Revoke,
     Extend,
     Unknown,
+}
+
+pub struct Payload<'packet> {
+    nonce: Nonce,
+    encrypted_req: &'packet[u8],
+}
+
+impl<'packet> Payload<'packet> {
+    fn from_packet(packet: &'packet[u8]) -> Result<Self, &'static str> {
+        Ok(Payload { nonce: Nonce::from_slice(&packet[..NONCEBYTES]).unwrap(),
+                  encrypted_req: &packet[NONCEBYTES..] })
+    }
+
+    fn decrypt(&self, state: &mut State, key_data: &KeyData) -> Result<Vec<u8>, ()> {
+        if self.nonce.lt(&state.nonce) {
+            Err(println!("received nonce {:?} is less than last recorded {:?}",
+                     self.nonce, state.nonce))
+        } else {
+            state.nonce = self.nonce;
+            state.write();
+            box_::open(&self.encrypted_req, &self.nonce, &key_data.peer_public,
+                       &key_data.secret)
+        }
+    }
 }
 
 pub struct ClientLease {
@@ -60,7 +88,7 @@ pub struct AccessTask {
 impl AccessTask {
     fn new (cmd: &String, duration: u64, req_addr: IpAddr, handle: &Handle) -> Self {
         AccessTask {cmd: cmd.clone(), duration: duration,
-                    req_addr: req_addr.to_string(), handle: handle.clone()}
+                    req_addr: req_addr.to_string(), handle: handle.clone() }
     }
 }
 
@@ -69,6 +97,8 @@ impl AccessTask {
      duration: u64,
      handle: Handle,
      addrs: Rc<RefCell<HashMap<String,ClientLease>>>,
+     state: State,
+     key_data: KeyData,
 }
 
 impl UdpCodec for AccessCodec {
@@ -76,8 +106,10 @@ impl UdpCodec for AccessCodec {
     type Out = (SocketAddr, Vec<u8>);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
+        let payload = Payload::from_packet(buf).unwrap();
+        let req_packet = payload.decrypt(&mut self.state, &self.key_data).unwrap();
         let task =
-        if let Ok(recv_req)  = AccessReq::from_msg(buf) {
+        if let Ok(recv_req)  = AccessReq::from_msg(&req_packet) {
             if recv_req.addr.is_unspecified() {
                 AccessTask::new(&self.cmd, self.duration, addr.ip(), &self.handle)
             } else {
@@ -232,10 +264,13 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let kc = AccessCodec {cmd: String::from(matches.value_of("CMD").unwrap()),
-                         duration: matches.value_of("duration").unwrap_or("5")
-                         .parse::<u64>().unwrap(),
-                         handle: handle.clone(),
-                         addrs: Rc::new(RefCell::new(HashMap::new()))};
+                          duration: matches.value_of("duration").unwrap_or("5")
+                          .parse::<u64>().unwrap(),
+                          handle: handle.clone(),
+                          addrs: Rc::new(RefCell::new(HashMap::new())),
+                          state: State::read(String::from("accessd_state.yaml")),
+                          key_data: KeyData::read(String::from("accessd_keydata.yaml"))
+    };
 
     let addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
     let sock = UdpSocket::bind(&addr, &handle).unwrap();
