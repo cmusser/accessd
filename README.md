@@ -19,3 +19,37 @@ As a whirlwind tour of Rust, `accessd` covered a fair amount of ground. Specific
 - THe sodiumoxide Rust bindings to libsodium (the widely used implementation of the NaCl security suite).
 - Various bread-and-butter Rust constructs: structs (with both `impl` and `impl` of traits), enums, match statements, if-let. 
 - Shared mutable state, using a `HashMap` and the `Rc`/`RefCell` wrapping technique to make it available safely.
+
+## Usage
+
+The system has four components
+
+- `accessd`: the server, which manages access
+- a firewall configuration script. One compatible with the FreeBSD `ipfw(2)` system is provided. 
+- `access`: the client, which requests access
+- `access-keygen`: a program to generate public private keypairs
+
+To use:
+
+1. run `access-keygen` twice (for the server and the client) to generate keypairs for the two peers.
+  ```
+  cargo run --bin access-keygen -- access
+  cargo run --bin access-keygen -- accessd
+  ```
+  These commands create keypair files named `access_keypair.yaml` and `accessd_keypair.yaml`.
+
+2. Create key data files for the peers. For the client, copy the `access_keypair.yaml` file to `access_keydata.yaml`, change the `public` field name to `peer_public` and replace the data for that field by pasting in the `public` value from `accessd_keypair.yaml`. For the server, repeat this procedure with the `accessd_keypair.yaml`, copying it to `access_keydata.yaml`, renaming `public` to `peer_public` and pasting in the public value from `access_keypair.yaml`. *Note: yes this is clunky. There should be a utility program to facilitate the "key exchange" process.*
+
+3. On the server machine, run `accessd`:
+  ```
+  sudo sh -c 'cargo run --bin accessd -d 900 $(pwd)/ipfw-ssh.sh > accessd.out &'
+  ```
+  Note that the firewall management script provided is for the `ipfw(2)` firewall system used by {Free,DragonFly}. You'll have to write your own script for another firewall systems (iptables, `pf(4)`, NPF, etc). The script is invoked with two arguments. The first is the word `grant` or `revoke` and the second is the IP address to which the request is to apply.
+  
+4. On the client, you can request access to the server with a command like this:
+  ```
+  cargo run --bin access -- 1.2.3.4
+  ```
+  By default, this will grant access to the IP address used as the source address for the request packet, which will be chosen by the OS. If you want to specify the address, use the `-a` flag to do so. If you don't want to specify the address, but want to make sure that the system chooses an IPv4 address, use the `-4` flag. Dual-stack support in `accessd` is not quite right yet, which is why the `-4` flag exists in the client for now.
+  
+The commands don't need to be run using Cargo, of course. Just copy them out of the source directory's `target/{debug,release}` directory to a convenient place, like `/usr/local/bin`.
