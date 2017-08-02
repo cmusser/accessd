@@ -3,7 +3,7 @@ extern crate clap;
 extern crate sodiumoxide;
 
 use clap::App;
-use access::req::{SSH_ACCESS, AF_INET, AF_INET6};
+use access::req::{SSH_ACCESS, AF_INET, AF_INET6, REQ_PORT};
 use access::crypto::*;
 use sodiumoxide::crypto::box_;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
@@ -26,7 +26,7 @@ fn main() {
     let bind_addr: &str;
     let remote_addr: SocketAddr;
     let remote_str = matches.value_of("HOST").unwrap();
-    match format!("{}:8080", remote_str).to_socket_addrs() {
+    match format!("{}:{}", remote_str, REQ_PORT).to_socket_addrs() {
         Ok(mut sockaddrs) => {
             if matches.is_present("prefer-ipv4") {
                 if let Some(ipv4) = sockaddrs.find(|addr| { addr.is_ipv4() }) {

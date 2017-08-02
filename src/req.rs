@@ -2,6 +2,7 @@ use std::fmt;
 use std::net::*;
 use nom::*;
 
+pub const REQ_PORT: u16 = 7387;
 pub const SSH_ACCESS: u8 = 1;
 pub const AF_INET: u8 = 1;
 pub const AF_INET6: u8 = 2;

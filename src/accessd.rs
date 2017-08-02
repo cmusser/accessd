@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use clap::App;
 use futures::{future, Future, Stream};
-use access::req::AccessReq;
+use access::req::{AccessReq, REQ_PORT};
 use access::crypto::*;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::*;
@@ -272,7 +272,7 @@ fn main() {
                           key_data: KeyData::read(String::from("accessd_keydata.yaml"))
     };
 
-    let addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+    let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse().unwrap();
     let sock = UdpSocket::bind(&addr, &handle).unwrap();
     let (_, incoming) = sock.framed(kc).split();
 
