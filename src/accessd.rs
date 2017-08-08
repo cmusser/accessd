@@ -127,20 +127,19 @@ impl UdpCodec for AccessCodec {
             payload.decrypt(&mut self.state, &self.key_data)
         }) {
             Ok(req_packet) => {
-                let valid_task = if let Ok(recv_req)  = AccessReq::from_msg(&req_packet) {
-                    if recv_req.addr.is_unspecified() {
-                        Session::new(&self.cmd, self.duration, addr.ip(), &self.handle)
-                    } else {
-                        Session::new(&self.cmd, self.duration, recv_req.addr, &self.handle)
-                    }
-                } else {
-                    Session::new(&self.cmd, self.duration, AccessReq::blank().addr, &self.handle)
-                };
-                Ok(valid_task)
+                match AccessReq::from_msg(&req_packet) {
+                    Ok(recv_req) => {
+                        let client_ip = if recv_req.addr.is_unspecified() {
+                            addr.ip()
+                        } else {
+                            recv_req.addr
+                        };
+                        Ok(Session::new(&self.cmd, self.duration, client_ip, &self.handle))
+                    },
+                    Err(e) => Err(e),
+                }
             },
-            Err(e) => {
-                Err(e)
-            },
+            Err(e) => Err(e)
         };
         Ok((*addr, task_result, self.addrs.clone()))
     }

@@ -1,5 +1,7 @@
 use std::fmt;
 use std::net::*;
+
+use ::err::AccessError;
 use nom::*;
 
 pub const REQ_PORT: u16 = 7387;
@@ -67,16 +69,16 @@ pub struct AccessReq {
 }
 
 impl AccessReq {
-    pub fn from_msg(msg: &[u8]) -> Result<AccessReq, String> {
+    pub fn from_msg(msg: &[u8]) -> Result<AccessReq, AccessError> {
         match access_msg(&msg) {
             IResult::Done(_, req) => { Ok(req) },
             IResult::Incomplete(needed) => {
                 match needed {
-                    Needed::Unknown => { Err(format!("insufficient data (required unknown)")) },
-                    Needed::Size(s) => { Err(format!("Only {:?} provided", s)) },
+                    Needed::Unknown => Err(AccessError::ShortReq),
+                    Needed::Size(s) =>  Err(AccessError::ShortReqNeeded(s))
                 }
             },
-            IResult::Error(error) => {Err(format!("{}", error)) },
+            IResult::Error(error) => Err(AccessError::InvalidReq(error)) ,
         }
     }
 
