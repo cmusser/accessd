@@ -1,4 +1,4 @@
- #[macro_use]
+#[macro_use]
 #[allow(unused)]
 extern crate clap;
 extern crate access;
@@ -18,10 +18,11 @@ use std::rc::Rc;
 use std::str;
 use std::time::{Duration, Instant};
 
+use access::crypto::{State, KeyData};
+use access::err::AccessError;
+use access::req::{AccessReq, REQ_PORT};
 use clap::App;
 use futures::{future, Future, Stream};
-use access::req::{AccessReq, REQ_PORT};
-use access::crypto::*;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
@@ -46,20 +47,22 @@ pub struct Payload<'packet> {
 }
 
 impl<'packet> Payload<'packet> {
-    fn from_packet(packet: &'packet[u8]) -> Result<Self, &'static str> {
-        Ok(Payload { nonce: Nonce::from_slice(&packet[..NONCEBYTES]).unwrap(),
-                  encrypted_req: &packet[NONCEBYTES..] })
+    fn from_packet(packet: &'packet[u8]) -> Result<Self, AccessError> {
+        let nonce = Nonce::from_slice(&packet[..NONCEBYTES]);
+        match nonce {
+            Some(nonce) => Ok(Payload { nonce: nonce, encrypted_req: &packet[NONCEBYTES..] }),
+            None => Err(AccessError::InvalidNonce),
+        }
     }
 
-    fn decrypt(&self, state: &mut State, key_data: &KeyData) -> Result<Vec<u8>, ()> {
+    fn decrypt(&self, state: &mut State, key_data: &KeyData) -> Result<Vec<u8>, AccessError> {
         if self.nonce.lt(&state.nonce) {
-            Err(println!("received nonce {:?} is less than last recorded {:?}",
-                     self.nonce, state.nonce))
+            Err(AccessError::ReusedNonce)
         } else {
             state.nonce = self.nonce;
-            state.write();
+            state.write()?;
             box_::open(&self.encrypted_req, &self.nonce, &key_data.peer_public,
-                       &key_data.secret)
+                       &key_data.secret).map_err(|_| { AccessError::InvalidCiphertext })
         }
     }
 }
@@ -78,16 +81,16 @@ impl ClientLease {
     }
 }
 
-pub struct AccessTask {
+pub struct Session {
     cmd: String,
     duration: u64,
     req_addr: String,
     handle: Handle,
 }
 
-impl AccessTask {
+impl Session {
     fn new (cmd: &String, duration: u64, req_addr: IpAddr, handle: &Handle) -> Self {
-        AccessTask {cmd: cmd.clone(), duration: duration,
+        Session {cmd: cmd.clone(), duration: duration,
                     req_addr: req_addr.to_string(), handle: handle.clone() }
     }
 }
@@ -101,25 +104,45 @@ impl AccessTask {
      key_data: KeyData,
 }
 
+impl AccessCodec {
+
+    fn new(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration: u64,
+           handle: &Handle) -> Result<Self, AccessError> {
+        let state = State::read(state_filename)?;
+        let key_data = KeyData::read(key_data_filename)?;
+
+        Ok(AccessCodec {cmd: String::from(access_cmd),  duration: duration,
+                     handle: handle.clone(), addrs: Rc::new(RefCell::new(HashMap::new())),
+                     state: state, key_data: key_data})
+    }
+}
+
 impl UdpCodec for AccessCodec {
-    type In = (SocketAddr, AccessTask, Rc<RefCell<HashMap<String, ClientLease>>>);
+    type In = (SocketAddr, Result<Session, AccessError>, Rc<RefCell<HashMap<String, ClientLease>>>);
     type Out = (SocketAddr, Vec<u8>);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        let payload = Payload::from_packet(buf).unwrap();
-        let req_packet = payload.decrypt(&mut self.state, &self.key_data).unwrap();
-        let task =
-        if let Ok(recv_req)  = AccessReq::from_msg(&req_packet) {
-            if recv_req.addr.is_unspecified() {
-                AccessTask::new(&self.cmd, self.duration, addr.ip(), &self.handle)
-            } else {
-                AccessTask::new(&self.cmd, self.duration, recv_req.addr, &self.handle)
-            }
-        } else {
-            AccessTask::new(&self.cmd, self.duration, AccessReq::blank().addr, &self.handle)
-        };
 
-        Ok((*addr, task, self.addrs.clone()))
+        let task_result = match Payload::from_packet(buf).and_then(|payload| {
+            payload.decrypt(&mut self.state, &self.key_data)
+        }) {
+            Ok(req_packet) => {
+                let valid_task = if let Ok(recv_req)  = AccessReq::from_msg(&req_packet) {
+                    if recv_req.addr.is_unspecified() {
+                        Session::new(&self.cmd, self.duration, addr.ip(), &self.handle)
+                    } else {
+                        Session::new(&self.cmd, self.duration, recv_req.addr, &self.handle)
+                    }
+                } else {
+                    Session::new(&self.cmd, self.duration, AccessReq::blank().addr, &self.handle)
+                };
+                Ok(valid_task)
+            },
+            Err(e) => {
+                Err(e)
+            },
+        };
+        Ok((*addr, task_result, self.addrs.clone()))
     }
 
     fn encode(&mut self, (addr, buf): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
@@ -178,7 +201,7 @@ fn  get_timeout_action(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, client_
     }
 }
 
-fn grant_access(t: AccessTask, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
+fn grant_access(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
     println!("new lease for {}", t.req_addr);
     t.handle.clone().spawn(
         // 1: Execute the "grant" command.
@@ -201,7 +224,7 @@ fn grant_access(t: AccessTask, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
     )
 }
 
-fn extend_access(t: AccessTask, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
+fn extend_access(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
     println!("renew lease for {}", t.req_addr);
     t.handle.clone().spawn(
         // 1: start a delay before executing "revoke" command
@@ -215,7 +238,7 @@ fn extend_access(t: AccessTask, addrs: Rc<RefCell<HashMap<String, ClientLease>>>
     )
 }
 
-fn manage_lease(t: AccessTask, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
+fn manage_lease(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
                   -> futures::future::FutureResult<(), ()> {
 
     match get_timeout_action(&addrs, t.req_addr.clone()) {
@@ -259,36 +282,44 @@ fn main() {
         .about("Grant access to host")
         .args_from_usage(
             "-d, --duration=[seconds] 'duration of access period (default: 5)'
-                              <CMD>              'command to grant/revoke access'").get_matches();
+             -s, --state-file=[filename] 'state file'
+             -k, --key-data-file=[filename] 'key file'
+             <CMD>              'command to grant/revoke access'").get_matches();
+
+    let access_cmd = matches.value_of("CMD").unwrap();
+    let duration = matches.value_of("duration").unwrap_or("5").parse::<u64>().unwrap();
+    let state_filename = matches.value_of("state-file").unwrap_or("accessd_state.yaml");
+    let key_data_filename = matches.value_of("key-data-file").unwrap_or("accessd_keydata.yaml");
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
-    let kc = AccessCodec {cmd: String::from(matches.value_of("CMD").unwrap()),
-                          duration: matches.value_of("duration").unwrap_or("5")
-                          .parse::<u64>().unwrap(),
-                          handle: handle.clone(),
-                          addrs: Rc::new(RefCell::new(HashMap::new())),
-                          state: State::read(String::from("accessd_state.yaml")),
-                          key_data: KeyData::read(String::from("accessd_keydata.yaml"))
-    };
 
-    let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse().unwrap();
-    let sock = UdpSocket::bind(&addr, &handle).unwrap();
-    let (_, incoming) = sock.framed(kc).split();
+    match AccessCodec::new(state_filename, key_data_filename,
+                           access_cmd, duration, &handle) {
+        Ok(codec) => {
+            let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse().unwrap();
+            let sock = UdpSocket::bind(&addr, &handle).unwrap();
+            let (_, incoming) = sock.framed(codec).split();
 
-    let incoming = incoming.for_each(|(addr, task, addrs)| {
-        match handle_incoming(&addrs, task.req_addr.clone()) {
-            LeaseReqAction::Grant => {
-                grant_access(task, addrs)
-            },
-            LeaseReqAction::Extend => {
-                extend_access(task, addrs)
-            },
-            LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
-        }
-
-        future::ok(())
-    });
-
-    drop(core.run(incoming));
+            let incoming = incoming.for_each(|(addr, task, addrs)| {
+                match task {
+                    Ok(task) => {
+                        match handle_incoming(&addrs, task.req_addr.clone()) {
+                            LeaseReqAction::Grant => {
+                                grant_access(task, addrs)
+                            },
+                            LeaseReqAction::Extend => {
+                                extend_access(task, addrs)
+                            },
+                            LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
+                        }
+                    },
+                    Err(e) => println!("invalid task from {:?}: {}", addr, e),
+                }
+                future::ok(())
+            });
+            drop(core.run(incoming));
+        },
+        Err(e) => println!("failed: {}", e),
+    }
 }

@@ -8,3 +8,4 @@ extern crate sodiumoxide;
 
 pub mod req;
 pub mod crypto;
+pub mod err;

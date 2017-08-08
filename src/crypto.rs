@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 
+use ::err::AccessError;
 use data_encoding::{base16};
 use serde::{Serializer, Deserialize, Deserializer};
 use sodiumoxide::crypto::box_::*;
@@ -27,21 +28,20 @@ pub struct KeyData {
 }
 
 impl KeyData {
-    pub fn read(path_str: String) -> KeyData {
+    pub fn read(path_str: &str) -> Result<KeyData, AccessError> {
         let path = Path::new(&path_str);
 
         match File::open(&path) {
-            Err(why) => {
-                panic!("couldn't open {} ({})",
-                         path.display(), why.description());
-            },
+            Err(why) => Err(AccessError::FileError(String::from(format!("couldn't open {} ({})",
+                                                                 path.display(),
+                                                                 why.description())))),
 
             Ok(mut file) => {
                 let mut yaml = String::new();
                 match file.read_to_string(&mut yaml) {
-                    Err(why) => panic!("couldn't read {}: {}", path.display(),
-                                       why.description()),
-                    Ok(_) => serde_yaml::from_str(&yaml).unwrap(),
+                    Err(why) => Err(AccessError::FileError(format!("couldn't read {}: {}",
+                                                                 path.display(),why.description()))),
+                    Ok(_) => serde_yaml::from_str(&yaml).map_err(|e| { AccessError::SerializeError(e) }),
                 }
             },
         }
@@ -57,7 +57,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn read(path_str: String) -> State {
+    pub fn read(path_str: &str) -> Result<State, AccessError> {
         let path = PathBuf::from(path_str);
 
         let state = match File::open(&path) {
@@ -65,18 +65,18 @@ impl State {
                 println!("couldn't open {} ({}), so resetting nonce",
                          path.display(), why.description());
                 let initial: [u8; NONCEBYTES] = [0; NONCEBYTES];
-                State { path: path, nonce: Nonce::from_slice(&initial).unwrap() }
+                Ok(State { path: path, nonce: Nonce::from_slice(&initial).unwrap() })
             },
 
             Ok(mut file) => {
                 let mut yaml = String::new();
                 match file.read_to_string(&mut yaml) {
-                    Err(why) => panic!("couldn't read {}: {}", path.display(),
-                                       why.description()),
+                    Err(why) => Err(AccessError::FileError(format!("couldn't read {}: {}",
+                                                                 path.display(), why.description()))),
                     Ok(_) => {
                         let mut state: State = serde_yaml::from_str(&yaml).unwrap();
                         state.path = path;
-                        state
+                        Ok(state)
                     }
                 }
             },
@@ -84,22 +84,21 @@ impl State {
         state
     }
 
-    pub fn write(&self) {
+    pub fn write(&self) -> Result<(), AccessError> {
 
-        let mut file = match File::create(&self.path) {
-            Err(why) => panic!("couldn't create {}: {}",
-                               self.path.display(), why.description()),
-            Ok(file) => file,
-        };
+        let mut file = File::create(&self.path).map_err(|e| {
+            AccessError::FileError(format!("couldn't create {}: {}",
+                                         self.path.display(), e.description()))
+        })?;
 
-        let yaml = serde_yaml::to_string(self).unwrap();
-        match file.write_all(yaml.as_bytes()) {
-            Err(why) => {
-                panic!("couldn't write to {}: {}", self.path.display(),
-                       why.description())
-            },
-            Ok(_) => {},
-        }
+        let yaml = serde_yaml::to_string(self).map_err(|e| {
+            AccessError::SerializeError(e)
+        })?;
+
+        file.write_all(yaml.as_bytes()).map_err(|e| {
+            AccessError::FileError(format!("couldn't write to {}: {}",
+                                         self.path.display(), e.description()))
+        })
     }
 }
 

@@ -6,29 +6,28 @@ extern crate sodiumoxide;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::PathBuf;
 
+use access::err::AccessError;
 use clap::App;
 use access::crypto::Keypair;
 use sodiumoxide::crypto::box_;
 
-fn write_keypair(path: &Path, keypair: &Keypair) {
-    let display = path.display();
+fn write_keypair(path_str: &str, keypair: &Keypair) -> Result<(), AccessError> {
+     let path = PathBuf::from(path_str);
 
-    let mut file = match File::create(&path) {
-        Err(why) => panic!("couldn't create {}: {}",
-                           display, why.description()),
-        Ok(file) => file,
-    };
+    let mut file = File::create(&path).map_err(|e| {
+            AccessError::FileError(format!("couldn't create {}: {}",
+                                         path.display(), e.description()))
+        })?;
 
-    let yaml = serde_yaml::to_string(&keypair).unwrap();
-    match file.write_all(yaml.as_bytes()) {
-        Err(why) => {
-            panic!("couldn't write to {}: {}", display,
-                                               why.description())
-        },
-        Ok(_) => println!("successfully wrote keypair to {}", display),
-    }
+    let yaml = serde_yaml::to_string(&keypair)
+        .map_err(|e| { AccessError::SerializeError(e) })?;
+
+    file.write_all(yaml.as_bytes()) .map_err(|e| {
+        AccessError::FileError(format!("couldn't write to {}: {}",
+                                       path.display(), e.description()))
+    })
 }
 
 fn main() {
@@ -38,15 +37,18 @@ fn main() {
         .about("Generate YAML file with public/private keypair for Nacl authenticated encryption")
         .args_from_usage(
             "<NAME>              'keypair name'").get_matches();
-    
+
     sodiumoxide::init();
-    let keypair_name = format!("{}_keypair.yaml", matches.value_of("NAME").unwrap());
-    let path = Path::new(&keypair_name);
+    let keypair_filename = format!("{}_keypair.yaml", matches.value_of("NAME").unwrap());
 
     let (p, s) = box_::gen_keypair();
     let keypair = Keypair {
         public: p,
         secret: s,
     };
-    write_keypair(path, &keypair)
+
+    match write_keypair(&keypair_filename, &keypair) {
+        Ok(_) => println!("wrote keypair to {}", keypair_filename),
+        Err(e)=> println!("failed to write  {}: {}", keypair_filename, e),
+    }
 }

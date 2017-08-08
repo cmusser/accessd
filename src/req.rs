@@ -8,20 +8,20 @@ pub const AF_INET: u8 = 1;
 pub const AF_INET6: u8 = 2;
 
 pub enum ReqType {
-    SshAccess
+    TimedAccess
 }
 
 impl fmt::Display for ReqType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ReqType::SshAccess => { write!(f, "SSH access") }
+            ReqType::TimedAccess => { write!(f, "SSH access") }
         }
     }
 }
 
 fn to_req_type (i: u8) -> Option<ReqType> {
     match i {
-        SSH_ACCESS => Some(ReqType::SshAccess),
+        SSH_ACCESS => Some(ReqType::TimedAccess),
         _ => None,
     }
 }
@@ -81,7 +81,7 @@ impl AccessReq {
     }
 
     pub fn blank() -> AccessReq {
-        AccessReq {req_type: ReqType::SshAccess,
+        AccessReq {req_type: ReqType::TimedAccess,
                   addr: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))}
     }
 }
