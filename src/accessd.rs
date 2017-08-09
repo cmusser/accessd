@@ -123,7 +123,7 @@ impl UdpCodec for AccessCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let task_result = match Payload::from_packet(buf).and_then(|payload| {
+        let sess_result = match Payload::from_packet(buf).and_then(|payload| {
             payload.decrypt(&mut self.state, &self.key_data)
         }) {
             Ok(req_packet) => {
@@ -141,7 +141,7 @@ impl UdpCodec for AccessCodec {
             },
             Err(e) => Err(e)
         };
-        Ok((*addr, task_result, self.addrs.clone()))
+        Ok((*addr, sess_result, self.addrs.clone()))
     }
 
     fn encode(&mut self, (addr, buf): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
@@ -150,13 +150,14 @@ impl UdpCodec for AccessCodec {
     }
 }
 
-fn handle_incoming(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, client_addr: String) -> LeaseReqAction {
+fn handle_incoming(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &Session) -> LeaseReqAction {
+    let client_addr = sess.req_addr.clone();
     let mut hm = addrs.borrow_mut();
     let lease_info = hm.entry(client_addr);
     match lease_info {
         Occupied(mut entry) => {
             let lease = entry.get_mut();
-            if lease.timeout_start.elapsed().as_secs() < ((5.0 * 0.75) as u64) {
+            if lease.timeout_start.elapsed().as_secs() < (((sess.duration as f64) * 0.75) as u64) {
                 LeaseReqAction::Deny(String::from("request received before renewal window"))
             } else if lease.leases > 4 {
                 LeaseReqAction::Deny(String::from("max consecutive leases reached"))
@@ -180,14 +181,15 @@ fn create_lease(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, client_addr: S
     hm.entry(client_addr).or_insert(ClientLease::new());
 }
 
-fn  get_timeout_action(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, client_addr: String)
-                 -> TimeoutCompleteAction {
+fn  get_timeout_action(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &Session)
+                       -> TimeoutCompleteAction {
+    let client_addr = sess.req_addr.clone();
     let mut hm = addrs.borrow_mut();
     let lease_info = hm.entry(client_addr);
     match lease_info {
         Occupied(mut entry) => {
             let lease = entry.get_mut();
-            if lease.timeout_start.elapsed().as_secs() >= 5 {
+            if lease.timeout_start.elapsed().as_secs() >= sess.duration {
                 TimeoutCompleteAction::Revoke
             } else {
                 lease.renew_ok = true;
@@ -200,65 +202,65 @@ fn  get_timeout_action(addrs: &Rc<RefCell<HashMap<String,ClientLease>>>, client_
     }
 }
 
-fn grant_access(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
-    println!("new lease for {}", t.req_addr);
-    t.handle.clone().spawn(
+fn grant_access(sess: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
+    println!("new lease for {}", sess.req_addr);
+    sess.handle.clone().spawn(
         // 1: Execute the "grant" command.
-        Command::new(&t.cmd).arg("grant")
-            .arg(&t.req_addr)
-            .output_async(&t.handle).map(|o| {(o, t, addrs)})
+        Command::new(&sess.cmd).arg("grant")
+            .arg(&sess.req_addr)
+            .output_async(&sess.handle).map(|output| {(output, sess, addrs)})
         // 2: Create a lease for this client, and start a delay before the "revoke" command.
             .and_then(move |args| {
-                let (o, t, addrs) = args;
-                create_lease(&addrs, t.req_addr.clone());
-                print!("start command:\n{}", str::from_utf8(&o.stdout).unwrap());
-                Timeout::new(Duration::from_secs(t.duration), &t.handle)
-                    .unwrap().map(|_| { (t, addrs) })
+                let (output, sess, addrs) = args;
+                create_lease(&addrs, sess.req_addr.clone());
+                print!("start command:\n{}", str::from_utf8(&output.stdout).unwrap());
+                Timeout::new(Duration::from_secs(sess.duration), &sess.handle)
+                    .unwrap().map(|_| { (sess, addrs) })
             })
         // 3: Continue processing after the timeout.
             .then( |args| {
-                let (t, addrs) = args.unwrap();
-                manage_lease(t, addrs)
+                let (sess, addrs) = args.unwrap();
+                manage_lease(sess, addrs)
             })
     )
 }
 
-fn extend_access(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
-    println!("renew lease for {}", t.req_addr);
-    t.handle.clone().spawn(
+fn extend_access(sess: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>) {
+    println!("renew lease for {}", sess.req_addr);
+    sess.handle.clone().spawn(
         // 1: start a delay before executing "revoke" command
-        Timeout::new(Duration::from_secs(t.duration), &t.handle)
-            .unwrap().map(|_| { (t, addrs) })
+        Timeout::new(Duration::from_secs(sess.duration), &sess.handle)
+            .unwrap().map(|_| { (sess, addrs) })
         // 2: Continue processing after the timeout.
             .then( |args| {
-                let (t, addrs) = args.unwrap();
-                manage_lease(t, addrs)
+                let (sess, addrs) = args.unwrap();
+                manage_lease(sess, addrs)
             })
     )
 }
 
-fn manage_lease(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
+fn manage_lease(sess: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
                   -> futures::future::FutureResult<(), ()> {
 
-    match get_timeout_action(&addrs, t.req_addr.clone()) {
+    match get_timeout_action(&addrs, &sess) {
         TimeoutCompleteAction::Revoke => {
-            t.handle.clone().spawn(
-                Command::new(&t.cmd).arg("revoke")
-                    .arg(&t.req_addr)
-                    .output_async(&t.handle).map(|o| {(o, t, addrs)})
+            sess.handle.clone().spawn(
+                Command::new(&sess.cmd).arg("revoke")
+                    .arg(&sess.req_addr)
+                    .output_async(&sess.handle).map(|output| {(output, sess, addrs)})
                     .then(move |args| {
-                        let (o, t, addrs) = args.unwrap();
+                        let (output, sess, addrs) = args.unwrap();
                         {
                             let mut hm = addrs.borrow_mut();
                             {
-                                let lease = hm.get_mut(&t.req_addr).unwrap();
-                                println!("removing {} after {} seconds ", t.req_addr,
+                                let lease = hm.get_mut(&sess.req_addr).unwrap();
+                                println!("removing {} after {} seconds ", sess.req_addr,
                                          lease.lease_start.elapsed().as_secs());
                             }
-                            hm.remove(&t.req_addr);
+                            hm.remove(&sess.req_addr);
                         }
 
-                        print!("stop command:\n{}", str::from_utf8(&o.stdout).unwrap());
+                        print!("stop command:\n{}", str::from_utf8(&output.stdout).unwrap());
                         future::ok(())
                     }));
             future::ok(())
@@ -267,7 +269,7 @@ fn manage_lease(t: Session, addrs: Rc<RefCell<HashMap<String, ClientLease>>>)
             future::ok(())
         },
         TimeoutCompleteAction::Unknown => {
-            println!("{} unknown", t.req_addr);
+            println!("{} unknown", sess.req_addr);
             future::ok(())
         }
     }
@@ -280,13 +282,13 @@ fn main() {
         .author("Chuck Musser <cmusser@sonic.net>")
         .about("Grant access to host")
         .args_from_usage(
-            "-d, --duration=[seconds] 'duration of access period (default: 5)'
+            "-d, --duration=[seconds] 'duration of access period (default: 900)'
              -s, --state-file=[filename] 'state file'
              -k, --key-data-file=[filename] 'key file'
              <CMD>              'command to grant/revoke access'").get_matches();
 
     let access_cmd = matches.value_of("CMD").unwrap();
-    let duration = matches.value_of("duration").unwrap_or("5").parse::<u64>().unwrap();
+    let duration = matches.value_of("duration").unwrap_or("900").parse::<u64>().unwrap();
     let state_filename = matches.value_of("state-file").unwrap_or("accessd_state.yaml");
     let key_data_filename = matches.value_of("key-data-file").unwrap_or("accessd_keydata.yaml");
 
@@ -300,20 +302,20 @@ fn main() {
             let sock = UdpSocket::bind(&addr, &handle).unwrap();
             let (_, incoming) = sock.framed(codec).split();
 
-            let incoming = incoming.for_each(|(addr, task, addrs)| {
-                match task {
-                    Ok(task) => {
-                        match handle_incoming(&addrs, task.req_addr.clone()) {
+            let incoming = incoming.for_each(|(addr, sess, addrs)| {
+                match sess {
+                    Ok(sess) => {
+                        match handle_incoming(&addrs, &sess) {
                             LeaseReqAction::Grant => {
-                                grant_access(task, addrs)
+                                grant_access(sess, addrs)
                             },
                             LeaseReqAction::Extend => {
-                                extend_access(task, addrs)
+                                extend_access(sess, addrs)
                             },
                             LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
                         }
                     },
-                    Err(e) => println!("invalid task from {:?}: {}", addr, e),
+                    Err(e) => println!("invalid sess from {:?}: {}", addr, e),
                 }
                 future::ok(())
             });
