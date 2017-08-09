@@ -77,8 +77,7 @@ impl AccessClient {
                                                                   &self.key_data.secret);
                             payload.extend(encrypted_req_packet);
                             s.send_to(&payload, addr).expect("send_to failed");
-                            println!("access request of len {} sent to {:?}", payload.len(),
-                                     self.remote_addr);
+                            println!("access request sent to {}", addr);
                             self.state.write()
                         },
                         Err(e) => Err(AccessError::IoError(e)),
