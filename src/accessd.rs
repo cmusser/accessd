@@ -95,7 +95,7 @@ impl Session {
     }
 }
 
- pub struct AccessCodec {
+pub struct AccessCodec {
      cmd: String,
      duration: u64,
      handle: Handle,
@@ -119,7 +119,7 @@ impl AccessCodec {
 
 impl UdpCodec for AccessCodec {
     type In = (SocketAddr, Result<Session, AccessError>, Rc<RefCell<HashMap<String, ClientLease>>>);
-    type Out = (SocketAddr, Vec<u8>);
+    type Out = (SocketAddr, Result<Session, AccessError>, Rc<RefCell<HashMap<String, ClientLease>>>);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
@@ -144,8 +144,22 @@ impl UdpCodec for AccessCodec {
         Ok((*addr, sess_result, self.sessions.clone()))
     }
 
-    fn encode(&mut self, (addr, buf): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        into.extend(buf);
+    fn encode(&mut self, (addr, sess, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        match sess {
+            Ok(sess) => {
+                match handle_incoming(&sessions, &sess) {
+                    LeaseReqAction::Grant => {
+                        grant_access(sess, sessions)
+                    },
+                    LeaseReqAction::Extend => {
+                        extend_access(sess, sessions)
+                    },
+                    LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
+                }
+            },
+            Err(e) => println!("invalid sess from {:?}: {}", addr, e),
+        }
+        into.extend(b"thanks");
         addr
     }
 }
@@ -300,25 +314,8 @@ fn main() {
         Ok(codec) => {
             let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse().unwrap();
             let sock = UdpSocket::bind(&addr, &handle).unwrap();
-            let (_, incoming) = sock.framed(codec).split();
-
-            let incoming = incoming.for_each(|(addr, sess, sessions)| {
-                match sess {
-                    Ok(sess) => {
-                        match handle_incoming(&sessions, &sess) {
-                            LeaseReqAction::Grant => {
-                                grant_access(sess, sessions)
-                            },
-                            LeaseReqAction::Extend => {
-                                extend_access(sess, sessions)
-                            },
-                            LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
-                        }
-                    },
-                    Err(e) => println!("invalid sess from {:?}: {}", addr, e),
-                }
-                future::ok(())
-            });
+            let (framed_tx, framed_rx) = sock.framed(codec).split();
+            let incoming = framed_rx.forward(framed_tx);
             drop(core.run(incoming));
         },
         Err(e) => println!("failed: {}", e),
