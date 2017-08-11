@@ -7,5 +7,6 @@ extern crate serde_yaml;
 extern crate sodiumoxide;
 
 pub mod req;
+pub mod resp;
 pub mod crypto;
 pub mod err;

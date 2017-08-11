@@ -5,7 +5,7 @@ use ::err::AccessError;
 use nom::*;
 
 pub const REQ_PORT: u16 = 7387;
-pub const SSH_ACCESS: u8 = 1;
+pub const TIMED_ACCESS: u8 = 1;
 pub const AF_INET: u8 = 1;
 pub const AF_INET6: u8 = 2;
 
@@ -23,7 +23,7 @@ impl fmt::Display for ReqType {
 
 fn to_req_type (i: u8) -> Option<ReqType> {
     match i {
-        SSH_ACCESS => Some(ReqType::TimedAccess),
+        TIMED_ACCESS => Some(ReqType::TimedAccess),
         _ => None,
     }
 }
@@ -69,6 +69,10 @@ pub struct AccessReq {
 }
 
 impl AccessReq {
+    pub fn new(req_type: ReqType, client_addr: IpAddr) -> Self {
+        AccessReq {req_type: req_type, addr: client_addr }
+    }
+
     pub fn from_msg(msg: &[u8]) -> Result<AccessReq, AccessError> {
         match access_msg(&msg) {
             IResult::Done(_, req) => { Ok(req) },
@@ -79,6 +83,20 @@ impl AccessReq {
                 }
             },
             IResult::Error(error) => Err(AccessError::InvalidReq(error)) ,
+        }
+    }
+
+    pub fn to_msg(&self) -> Vec<u8> {
+        match self.addr {
+            IpAddr::V4(addr4) => {
+                let o = addr4.octets();
+                vec![TIMED_ACCESS, AF_INET, o[0], o[1], o[2], o[3]]
+            },
+            IpAddr::V6(addr6) => {
+                let o = addr6.octets();
+                vec![TIMED_ACCESS, AF_INET6, o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7],
+                     o[8], o[9], o[10], o[11], o[12], o[13], o[14], o[15]]
+            }
         }
     }
 

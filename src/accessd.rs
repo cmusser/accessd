@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use access::crypto::{State, KeyData};
 use access::err::AccessError;
 use access::req::{AccessReq, REQ_PORT};
+use access::resp::SessReqAction;
 use clap::App;
 use futures::{future, Future, Stream};
 use sodiumoxide::crypto::box_;
@@ -28,12 +29,6 @@ use sodiumoxide::crypto::box_::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
-
-enum LeaseReqAction {
-    Grant,
-    Extend,
-    Deny(String),
-}
 
 enum TimeoutCompleteAction {
     Revoke,
@@ -129,11 +124,8 @@ impl UdpCodec for AccessCodec {
             Ok(req_packet) => {
                 match AccessReq::from_msg(&req_packet) {
                     Ok(recv_req) => {
-                        let client_ip = if recv_req.addr.is_unspecified() {
-                            addr.ip()
-                        } else {
-                            recv_req.addr
-                        };
+                        let client_ip =
+                            if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };
                         Ok(Session::new(&self.cmd, self.duration, client_ip, &self.handle))
                     },
                     Err(e) => Err(e),
@@ -148,13 +140,9 @@ impl UdpCodec for AccessCodec {
         match sess {
             Ok(sess) => {
                 match handle_incoming(&sessions, &sess) {
-                    LeaseReqAction::Grant => {
-                        grant_access(sess, sessions)
-                    },
-                    LeaseReqAction::Extend => {
-                        extend_access(sess, sessions)
-                    },
-                    LeaseReqAction::Deny(msg) =>  { println!("no action for {}: {}", addr, msg); },
+                    SessReqAction::Grant => grant_access(sess, sessions),
+                    SessReqAction::Extend => extend_access(sess, sessions),
+                    deny =>  println!("{}: {}", addr, deny),
                 }
             },
             Err(e) => println!("invalid sess from {:?}: {}", addr, e),
@@ -164,7 +152,7 @@ impl UdpCodec for AccessCodec {
     }
 }
 
-fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &Session) -> LeaseReqAction {
+fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &Session) -> SessReqAction {
     let client_addr = sess.req_addr.clone();
     let mut sessions_mut = sessions.borrow_mut();
     let lease_info = sessions_mut.entry(client_addr);
@@ -172,20 +160,20 @@ fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &S
         Occupied(mut entry) => {
             let lease = entry.get_mut();
             if lease.timeout_start.elapsed().as_secs() < (((sess.duration as f64) * 0.75) as u64) {
-                LeaseReqAction::Deny(String::from("request received before renewal window"))
+                SessReqAction::DenyRenewTooSoon
             } else if lease.leases > 4 {
-                LeaseReqAction::Deny(String::from("max consecutive leases reached"))
+                SessReqAction::DenyMaxExtensionsReached
             } else if !lease.renew_ok {
-                LeaseReqAction::Deny(String::from("renewal already requested"))
+                SessReqAction::DenyRenewAlreadyInProgress
             } else {
                 lease.timeout_start = Instant::now();
                 lease.renew_ok = false;
                 lease.leases += 1;
-                LeaseReqAction::Extend
+                SessReqAction::Extend
             }
         },
         Vacant(_) => {
-            LeaseReqAction::Grant
+            SessReqAction::Grant
         }
     }
 }
@@ -289,6 +277,26 @@ fn manage_lease(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>
     }
 }
 
+fn run(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration: u64)
+       -> Result<(), AccessError> {
+
+    let mut core = Core::new().map_err(|e| { AccessError::IoError(e) })?;
+    let handle = core.handle();
+
+    let codec = AccessCodec::new(state_filename, key_data_filename, access_cmd,
+                                 duration, &handle)?;
+
+    let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse()
+        .map_err(|e| { AccessError::InvalidAddr(e) })?;
+    let sock = UdpSocket::bind(&addr, &handle)
+        .map_err(|e| { AccessError::IoError(e) })?;
+
+    let (framed_tx, framed_rx) = sock.framed(codec).split();
+    let incoming = framed_rx.forward(framed_tx);
+
+    Ok(drop(core.run(incoming)))
+}
+
 fn main() {
 
     let matches = App::new("accessd")
@@ -306,18 +314,7 @@ fn main() {
     let state_filename = matches.value_of("state-file").unwrap_or("accessd_state.yaml");
     let key_data_filename = matches.value_of("key-data-file").unwrap_or("accessd_keydata.yaml");
 
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-
-    match AccessCodec::new(state_filename, key_data_filename,
-                           access_cmd, duration, &handle) {
-        Ok(codec) => {
-            let addr: SocketAddr = format!("0.0.0.0:{}", REQ_PORT).parse().unwrap();
-            let sock = UdpSocket::bind(&addr, &handle).unwrap();
-            let (framed_tx, framed_rx) = sock.framed(codec).split();
-            let incoming = framed_rx.forward(framed_tx);
-            drop(core.run(incoming));
-        },
-        Err(e) => println!("failed: {}", e),
+    if let Err(e) = run(state_filename, key_data_filename, access_cmd, duration) {
+        println!("failed: {}", e);
     }
 }

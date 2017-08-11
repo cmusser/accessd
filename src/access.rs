@@ -3,82 +3,75 @@ extern crate clap;
 extern crate sodiumoxide;
 
 use clap::App;
-use access::req::{SSH_ACCESS, AF_INET, AF_INET6, REQ_PORT};
+use access::req::{AccessReq, REQ_PORT, ReqType};
 use access::err::AccessError;
 use access::crypto::*;
 use sodiumoxide::crypto::box_;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 
 struct AccessClient {
     state: State,
     key_data: KeyData,
-    remote_addr: Option<SocketAddr>,
+    socket: Option<UdpSocket>,
 }
 
 impl AccessClient {
     fn new(state_filename: &str, key_data_filename: &str) -> Result<Self, AccessError> {
         let state = State::read(state_filename)?;
         let key_data = KeyData::read(key_data_filename)?;
-        Ok(AccessClient {state: state, key_data: key_data, remote_addr: None })
+        Ok(AccessClient {state: state, key_data: key_data, socket: None })
     }
 
     fn set_remote(&mut self, remote_str: &str, prefer_ipv4: bool) -> Result<&mut Self, AccessError> {
-        let addrs = format!("{}:{}", remote_str, REQ_PORT).to_socket_addrs();
-        match addrs {
-            Ok(mut sockaddrs) => {
-                if prefer_ipv4 {
-                    if let Some(ipv4) = sockaddrs.find(|addr| { addr.is_ipv4() }) {
-                        self.remote_addr = Some(ipv4);
-                        Ok(self)
-                    } else {
-                        Err(AccessError::NoIpv4Addr)
-                    }
-                } else {
-                    let r = sockaddrs.nth(0).unwrap();
-                    self.remote_addr = Some(r);
-                    Ok(self)
-                }
-            },
-            Err(err) => Err(AccessError::IoError(err))
-        }
+        let mut addrs = format!("{}:{}", remote_str, REQ_PORT)
+            .to_socket_addrs()
+            .map_err(|e| { AccessError::IoError(e) })?;
+
+        if prefer_ipv4 {
+            if let Some(ipv4) = addrs.find(|addr| { addr.is_ipv4() }) {
+                let socket = UdpSocket::bind("0.0.0.0:8079").and_then(|socket| {
+                    socket.connect(ipv4)?;
+                    Ok(socket)
+                }).map_err(|e| { AccessError::IoError(e) })?;
+                self.socket = Some(socket);
+            } else {
+                return Err(AccessError::NoIpv4Addr);
+            }
+        } else {
+            let addr = addrs.nth(0).unwrap();
+            let bind_addr = if addr.is_ipv4() { "0.0.0.0" } else { "[::]" };
+            let socket = UdpSocket::bind(format!("{}:8079", bind_addr)).and_then(|socket| {
+                socket.connect(addr)?;
+                Ok(socket)
+            }).map_err(|e| { AccessError::IoError(e) })?;
+            self.socket = Some(socket);
+        };
+
+        Ok(self)
     }
 
     fn send_req(&mut self, client_addr_str: &str) -> Result<(), AccessError> {
 
         match IpAddr::from_str(client_addr_str) {
-            Ok(addr) => {
-                let msg = match addr {
-                    IpAddr::V4(addr4) => {
-                        let o = addr4.octets();
-                        vec![SSH_ACCESS, AF_INET,
-                             o[0], o[1], o[2], o[3]]
-                    },
-                    IpAddr::V6(addr6) => {
-                        let o = addr6.octets();
-                        vec![SSH_ACCESS, AF_INET6,
-                             o[0], o[1], o[2], o[3],
-                             o[4], o[5], o[6], o[7],
-                             o[8], o[9], o[10], o[11],
-                             o[12], o[13], o[14], o[15]]
-                    }
-                };
-
-                if let Some(addr) = self.remote_addr {
-                    let bind_addr = if addr.is_ipv4() {"0.0.0.0"} else {"[::]"};
-                    let socket = UdpSocket::bind(format!("{}:8079", bind_addr));
-                    match socket {
-                        Ok(s) => {
-                            self.state.nonce.increment_le_inplace();
-                            let mut payload = Vec::new();
-                            payload.extend(&self.state.nonce[..]);
-                            let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
-                                                                  &self.key_data.peer_public,
-                                                                  &self.key_data.secret);
-                            payload.extend(encrypted_req_packet);
-                            s.send_to(&payload, addr).expect("send_to failed");
-                            println!("access request sent to {}", addr);
-                            self.state.write()
+            Ok(client_addr) => {
+                let msg = AccessReq::new(ReqType::TimedAccess, client_addr).to_msg();
+                if let Some(ref socket) = self.socket {
+                    self.state.nonce.increment_le_inplace();
+                    let mut payload = Vec::new();
+                    payload.extend(&self.state.nonce[..]);
+                    let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
+                                                          &self.key_data.peer_public,
+                                                          &self.key_data.secret);
+                    payload.extend(encrypted_req_packet);
+                    socket.send(&payload).map_err(|e| { AccessError::IoError(e) })?;
+                    println!("access request for {} sent", client_addr);
+                    self.state.write()?;
+                    let mut buf = [0; 10];
+                    match socket.recv(&mut buf) {
+                        Ok(received) => {
+                            println!("received {} bytes: {}", received, String::from_utf8(buf.to_vec()).unwrap());
+                            Ok(())
                         },
                         Err(e) => Err(AccessError::IoError(e)),
                     }
