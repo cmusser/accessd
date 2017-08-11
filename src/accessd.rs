@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use access::crypto::{State, KeyData};
 use access::err::AccessError;
 use access::req::{AccessReq, REQ_PORT};
-use access::resp::SessReqAction;
+use access::resp::{SessReqAction, SessResp};
 use clap::App;
 use futures::{future, Future, Stream};
 use sodiumoxide::crypto::box_;
@@ -29,6 +29,8 @@ use sodiumoxide::crypto::box_::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
+
+const MAX_EXTENSIONS: u8 = 4;
 
 enum TimeoutCompleteAction {
     Revoke,
@@ -139,15 +141,18 @@ impl UdpCodec for AccessCodec {
     fn encode(&mut self, (addr, sess, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
         match sess {
             Ok(sess) => {
-                match handle_incoming(&sessions, &sess) {
+                let resp = match handle_incoming(&sessions, &sess) {
                     SessReqAction::Grant => grant_access(sess, sessions),
-                    SessReqAction::Extend => extend_access(sess, sessions),
-                    deny =>  println!("{}: {}", addr, deny),
-                }
+                    SessReqAction::Extend => extend_access(sess, MAX_EXTENSIONS, sessions),
+                    deny =>  {
+                        println!("{}: {}", addr, deny);
+                        SessResp::new(deny, 0, 0)
+                    },
+                };
+                into.extend(resp.to_msg());
             },
             Err(e) => println!("invalid sess from {:?}: {}", addr, e),
         }
-        into.extend(b"thanks");
         addr
     }
 }
@@ -161,7 +166,7 @@ fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,ClientLease>>>, sess: &S
             let lease = entry.get_mut();
             if lease.timeout_start.elapsed().as_secs() < (((sess.duration as f64) * 0.75) as u64) {
                 SessReqAction::DenyRenewTooSoon
-            } else if lease.leases > 4 {
+            } else if lease.leases > MAX_EXTENSIONS {
                 SessReqAction::DenyMaxExtensionsReached
             } else if !lease.renew_ok {
                 SessReqAction::DenyRenewAlreadyInProgress
@@ -204,8 +209,11 @@ fn  get_timeout_action(sessions: &Rc<RefCell<HashMap<String,ClientLease>>>, sess
     }
 }
 
-fn grant_access(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>>>) {
+fn grant_access(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>>>)
+                -> SessResp {
     println!("new lease for {}", sess.req_addr);
+    let duration = sess.duration;
+
     sess.handle.clone().spawn(
         // 1: Execute the "grant" command.
         Command::new(&sess.cmd).arg("grant")
@@ -224,11 +232,15 @@ fn grant_access(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>
                 let (sess, sessions) = args.unwrap();
                 manage_lease(sess, sessions)
             })
-    )
+    );
+    SessResp::new(SessReqAction::Grant, duration, MAX_EXTENSIONS)
 }
 
-fn extend_access(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>>>) {
+fn extend_access(sess: Session, remaining: u8, sessions: Rc<RefCell<HashMap<String, ClientLease>>>)
+                 -> SessResp {
     println!("renew lease for {}", sess.req_addr);
+    let duration = sess.duration;
+
     sess.handle.clone().spawn(
         // 1: start a delay before executing "revoke" command
         Timeout::new(Duration::from_secs(sess.duration), &sess.handle)
@@ -238,7 +250,8 @@ fn extend_access(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease
                 let (sess, sessions) = args.unwrap();
                 manage_lease(sess, sessions)
             })
-    )
+    );
+    SessResp::new(SessReqAction::Extend, duration, remaining)
 }
 
 fn manage_lease(sess: Session, sessions: Rc<RefCell<HashMap<String, ClientLease>>>)

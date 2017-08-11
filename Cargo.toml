@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["cmusser@sonic.net"]
 
 [dependencies]
+byteorder = "1.0.0"
 clap = "2"
 data-encoding = "1.2.0"
 nom = "^3.0"

@@ -4,6 +4,7 @@ extern crate sodiumoxide;
 
 use clap::App;
 use access::req::{AccessReq, REQ_PORT, ReqType};
+use access::resp::{SessResp};
 use access::err::AccessError;
 use access::crypto::*;
 use sodiumoxide::crypto::box_;
@@ -67,10 +68,13 @@ impl AccessClient {
                     socket.send(&payload).map_err(|e| { AccessError::IoError(e) })?;
                     println!("access request for {} sent", client_addr);
                     self.state.write()?;
-                    let mut buf = [0; 10];
-                    match socket.recv(&mut buf) {
-                        Ok(received) => {
-                            println!("received {} bytes: {}", received, String::from_utf8(buf.to_vec()).unwrap());
+                    let mut recv_packet = [0; 10];
+                    match socket.recv(&mut recv_packet) {
+                        Ok(_) => {
+                            match SessResp::from_msg(&recv_packet) {
+                                Ok(recv_resp) => println!("{}",  recv_resp),
+                                Err(e) => println!("error: {}", e),
+                            }
                             Ok(())
                         },
                         Err(e) => Err(AccessError::IoError(e)),

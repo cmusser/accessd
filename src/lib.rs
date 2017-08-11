@@ -1,3 +1,4 @@
+extern crate byteorder;
 extern crate data_encoding;
 extern crate nom;
 #[macro_use]

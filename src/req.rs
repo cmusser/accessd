@@ -89,13 +89,16 @@ impl AccessReq {
     pub fn to_msg(&self) -> Vec<u8> {
         match self.addr {
             IpAddr::V4(addr4) => {
-                let o = addr4.octets();
-                vec![TIMED_ACCESS, AF_INET, o[0], o[1], o[2], o[3]]
+                let mut msg = Vec::with_capacity(6);
+                msg.extend_from_slice(&[TIMED_ACCESS, AF_INET]);
+                msg.extend_from_slice(&addr4.octets());
+                msg
             },
             IpAddr::V6(addr6) => {
-                let o = addr6.octets();
-                vec![TIMED_ACCESS, AF_INET6, o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7],
-                     o[8], o[9], o[10], o[11], o[12], o[13], o[14], o[15]]
+                let mut msg = Vec::with_capacity(18);
+                msg.extend_from_slice(&[TIMED_ACCESS, AF_INET6]);
+                msg.extend_from_slice(&addr6.octets());
+                msg
             }
         }
     }

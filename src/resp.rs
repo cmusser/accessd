@@ -1,7 +1,7 @@
 use std::fmt;
 
-
 use ::err::AccessError;
+use byteorder::{BigEndian, WriteBytesExt};
 use nom::*;
 
 pub const GRANT: u8 = 1;
@@ -99,6 +99,11 @@ impl SessResp {
             SessReqAction::DenyRenewAlreadyInProgress => DENY__RENEW_ALREADY_IN_PROGRESS,
         };
 
-        vec![action]
+        let mut msg = Vec::with_capacity(10);
+        msg.push(action);
+        let mut wtr = vec![];
+        wtr.write_u64::<BigEndian>(self.duration).unwrap();
+        msg.extend_from_slice(&wtr);
+        msg
     }
 }
