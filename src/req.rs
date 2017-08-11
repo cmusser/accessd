@@ -16,7 +16,7 @@ pub enum ReqType {
 impl fmt::Display for ReqType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ReqType::TimedAccess => { write!(f, "SSH access") }
+            ReqType::TimedAccess => { write!(f, "timed access") }
         }
     }
 }
@@ -114,13 +114,13 @@ impl fmt::Display for AccessReq {
 
 #[test]
 fn v4_access_msg() {
-    let msg = vec![SSH_ACCESS, AF_INET, 127, 0, 0, 1];
+    let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0, 1];
     AccessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
 fn v6_access_msg() {
-    let msg = vec![SSH_ACCESS, AF_INET6,
+    let msg = vec![TIMED_ACCESS, AF_INET6,
                    0x20, 0x01, 0x4, 0x70,
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
@@ -131,14 +131,14 @@ fn v6_access_msg() {
 #[test]
 #[should_panic(expected = "Only 5 provided")]
 fn v4_access_msg_2short() {
-    let msg = vec![SSH_ACCESS, AF_INET, 127, 0, 0];
+    let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0];
     AccessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "Only 15 provided")]
 fn v6_access_msg_2short() {
-    let msg = vec![SSH_ACCESS, AF_INET6,
+    let msg = vec![TIMED_ACCESS, AF_INET6,
                    0x20, 0x01, 0x4, 0x70,
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
@@ -156,7 +156,7 @@ fn v4_invalid_req_msg() {
 #[test]
 #[should_panic(expected = "Switch")]
 fn invalid_access_msg() {
-    let msg = vec![SSH_ACCESS, 42,
+    let msg = vec![TIMED_ACCESS, 42,
                    0x20, 0x01, 0x4, 0x70,
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
