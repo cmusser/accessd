@@ -5,16 +5,16 @@ use byteorder::{BigEndian, WriteBytesExt};
 use nom::*;
 
 pub const GRANT: u8 = 1;
-pub const EXTEND: u8 = 2;
+pub const RENEW: u8 = 2;
 pub const DENY_RENEW_TOO_SOON: u8 = 3;
-pub const DENY_MAX_EXTENSION_REACHED: u8 = 4;
+pub const DENY_MAX_RENEWALS_REACHED: u8 = 4;
 pub const DENY__RENEW_ALREADY_IN_PROGRESS: u8 = 5;
 
 pub enum SessReqAction {
     Grant,
-    Extend,
+    Renew,
     DenyRenewTooSoon,
-    DenyMaxExtensionsReached,
+    DenyMaxRenewalsReached,
     DenyRenewAlreadyInProgress,
 }
 
@@ -22,9 +22,9 @@ impl fmt::Display for SessReqAction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             SessReqAction::Grant => write!(f, "session granted"),
-            SessReqAction::Extend => write!(f, "session extended"),
+            SessReqAction::Renew => write!(f, "session renewed"),
             SessReqAction::DenyRenewTooSoon => write!(f, "request received before renewal window"),
-            SessReqAction::DenyMaxExtensionsReached => write!(f, "max session extensions  reached"),
+            SessReqAction::DenyMaxRenewalsReached => write!(f, "max session renewals reached"),
             SessReqAction::DenyRenewAlreadyInProgress => write!(f, "renewal already requested"),
         }
     }
@@ -33,9 +33,9 @@ impl fmt::Display for SessReqAction {
 fn to_action (i: u8) -> Option<SessReqAction> {
     match i {
         GRANT => Some(SessReqAction::Grant),
-        EXTEND => Some(SessReqAction::Extend),
+        RENEW => Some(SessReqAction::Renew),
         DENY_RENEW_TOO_SOON => Some(SessReqAction::DenyRenewTooSoon),
-        DENY_MAX_EXTENSION_REACHED => Some(SessReqAction::DenyMaxExtensionsReached),
+        DENY_MAX_RENEWALS_REACHED => Some(SessReqAction::DenyMaxRenewalsReached),
         DENY__RENEW_ALREADY_IN_PROGRESS => Some(SessReqAction::DenyRenewAlreadyInProgress),
         _ => None,
     }
@@ -48,33 +48,38 @@ named!(sessions <&[u8], u8>, call!(be_u8));
 named!(resp_msg <&[u8], SessResp>, do_parse!(
     a: action >>
     d: duration >>
-    s: sessions >>
-    (SessResp { action: a, duration: d, sessions: s })
+    r: sessions >>
+    (SessResp { action: a, duration: d, renewals_remaining: r })
 ));
 
 
 pub struct SessResp {
-    action: SessReqAction,
+    pub action: SessReqAction,
     duration: u64,
-    sessions: u8,
+    renewals_remaining: u8,
 }
 
 impl fmt::Display for SessResp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.action {
             ref grant @ SessReqAction::Grant =>
-                write!(f, "{} for {} seconds. {} extensions allowed",
-                                                grant, self.duration, self.sessions),
-            ref extend @ SessReqAction::Extend=>
-                write!(f, "{}, {} extension remaining", extend, self.duration),
+                write!(f, "{} for {} seconds. {} renewals allowed.",
+                                                grant, self.duration, self.renewals_remaining),
+            ref renew @ SessReqAction::Renew =>
+                write!(f, "{} for {} seconds. {} renewals remaining.",
+                       renew, self.duration, self.renewals_remaining),
+            ref too_soon @ SessReqAction::DenyRenewTooSoon =>
+                write!(f, "{}, renewal ok in {} seconds.",
+                       too_soon, self.duration),
+
             ref deny @ _ => write!(f, "{}", deny)
         }
     }
 }
 
 impl SessResp {
-    pub fn new(action: SessReqAction, duration: u64, sessions: u8) -> Self {
-        SessResp { action: action, duration: duration, sessions: sessions }
+    pub fn new(action: SessReqAction, duration: u64, renewals_remaining: u8) -> Self {
+        SessResp { action: action, duration: duration, renewals_remaining: renewals_remaining }
     }
 
     pub fn from_msg(msg: &[u8]) -> Result<SessResp, AccessError> {
@@ -93,9 +98,9 @@ impl SessResp {
     pub fn to_msg(&self) -> Vec<u8> {
         let action: u8 = match self.action {
             SessReqAction::Grant => GRANT,
-            SessReqAction::Extend => EXTEND,
+            SessReqAction::Renew => RENEW,
             SessReqAction::DenyRenewTooSoon => DENY_RENEW_TOO_SOON,
-            SessReqAction::DenyMaxExtensionsReached => DENY_MAX_EXTENSION_REACHED,
+            SessReqAction::DenyMaxRenewalsReached => DENY_MAX_RENEWALS_REACHED,
             SessReqAction::DenyRenewAlreadyInProgress => DENY__RENEW_ALREADY_IN_PROGRESS,
         };
 
@@ -104,6 +109,7 @@ impl SessResp {
         let mut wtr = vec![];
         wtr.write_u64::<BigEndian>(self.duration).unwrap();
         msg.extend_from_slice(&wtr);
+        msg.push(self.renewals_remaining);
         msg
     }
 }
