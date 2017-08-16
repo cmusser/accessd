@@ -13,6 +13,7 @@ use access::req::{AccessReq, REQ_PORT, ReqType};
 use access::resp::{SessResp};
 use access::err::AccessError;
 use access::keys::KeyData;
+use access::payload::Payload;
 use access::state::State;
 use clap::App;
 use futures::{Future, Sink, Stream};
@@ -38,13 +39,23 @@ impl UdpCodec for ClientCodec {
     type Out = (SocketAddr, IpAddr);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        Ok(match SessResp::from_msg(&buf) {
-            Ok(recv_resp) => {
-                println!("{}: {}", addr, recv_resp);
-                Ok(recv_resp)
+
+        let sess_result = match Payload::from_packet(buf).and_then(|payload| {
+            payload.decrypt(&mut self.state, &self.key_data)
+        }) {
+            Ok(resp_packet) => {
+                match SessResp::from_msg(&resp_packet) {
+                    Ok(recv_resp) => {
+                        println!("{}: {}", addr, recv_resp);
+                        Ok(recv_resp)
+                    },
+                    Err(e) => Err(e),
+                }
             },
-            Err(e) => Err(e),
-        })
+            Err(e) => Err(e)
+        };
+
+        Ok(sess_result)
     }
 
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {

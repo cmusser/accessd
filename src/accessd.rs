@@ -26,6 +26,7 @@ use access::req::{AccessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::App;
 use futures::{future, Future, Stream};
+use sodiumoxide::crypto::box_;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
@@ -126,7 +127,17 @@ impl UdpCodec for ServerCodec {
                     },
                     deny =>  deny,
                 };
-                into.extend(resp.to_msg());
+
+                self.state.local_nonce.increment_le_inplace();
+                into.extend(&self.state.local_nonce[..]);
+                let encrypted_req_packet = box_::seal(&resp.to_msg(),
+                                                      &self.state.local_nonce,
+                                                      &self.key_data.peer_public,
+                                                      &self.key_data.secret);
+                if let Err(e) = self.state.write() {
+                    println!("state file write failed: {}", e)
+                }
+                into.extend(encrypted_req_packet);
             },
             Err(e) => println!("invalid sess from {:?}: {}", addr, e),
         }
