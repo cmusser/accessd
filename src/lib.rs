@@ -8,8 +8,9 @@ extern crate serde_yaml;
 extern crate sodiumoxide;
 
 pub mod as_hex;
-pub mod keys;
 pub mod err;
+pub mod keys;
+pub mod payload;
 pub mod req;
 pub mod resp;
 pub mod state;

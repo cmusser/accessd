@@ -20,13 +20,12 @@ use std::time::{Duration, Instant};
 
 use access::keys::KeyData;
 use access::state::State;
+use access::payload::Payload;
 use access::err::AccessError;
 use access::req::{AccessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::App;
 use futures::{future, Future, Stream};
-use sodiumoxide::crypto::box_;
-use sodiumoxide::crypto::box_::*;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
@@ -37,32 +36,6 @@ enum TimeoutCompleteAction {
     Revoke,
     Renew,
     Unknown,
-}
-
-pub struct Payload<'packet> {
-    nonce: Nonce,
-    encrypted_req: &'packet[u8],
-}
-
-impl<'packet> Payload<'packet> {
-    fn from_packet(packet: &'packet[u8]) -> Result<Self, AccessError> {
-        let nonce = Nonce::from_slice(&packet[..NONCEBYTES]);
-        match nonce {
-            Some(nonce) => Ok(Payload { nonce: nonce, encrypted_req: &packet[NONCEBYTES..] }),
-            None => Err(AccessError::InvalidNonce),
-        }
-    }
-
-    fn decrypt(&self, state: &mut State, key_data: &KeyData) -> Result<Vec<u8>, AccessError> {
-        if self.nonce.lt(&state.remote_nonce) {
-            Err(AccessError::ReusedNonce)
-        } else {
-            state.remote_nonce = self.nonce;
-            state.write()?;
-            box_::open(&self.encrypted_req, &self.nonce, &key_data.peer_public,
-                       &key_data.secret).map_err(|_| { AccessError::InvalidCiphertext })
-        }
-    }
 }
 
 pub struct SessionInterval {
