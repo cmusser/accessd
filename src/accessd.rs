@@ -18,7 +18,8 @@ use std::rc::Rc;
 use std::str;
 use std::time::{Duration, Instant};
 
-use access::crypto::{State, KeyData};
+use access::keys::KeyData;
+use access::state::State;
 use access::err::AccessError;
 use access::req::{AccessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};

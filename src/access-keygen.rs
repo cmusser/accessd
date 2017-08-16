@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use access::err::AccessError;
 use clap::App;
-use access::crypto::Keypair;
+use access::keys::Keypair;
 use sodiumoxide::crypto::box_;
 
 fn write_keypair(path_str: &str, keypair: &Keypair) -> Result<(), AccessError> {
