@@ -42,9 +42,9 @@ To use:
 
 3. On the server machine, run `accessd`:
   ```
-  sudo sh -c 'cargo run --bin accessd -d 900 $(pwd)/ipfw-ssh.sh > accessd.out &'
+  sudo sh -c 'cargo run --bin accessd $(pwd)/ipfw-ssh.sh > accessd.out &'
   ```
-  This will grant access for 15 minutes. The default is 5 seconds, which was good for initial testing, but should probably be changed now. Note that the firewall management script provided is for the `ipfw(2)` firewall system used by {Free,DragonFly}, and opens up access to port 22 (SSH). You'll have to write your own script for other firewall systems (iptables, `pf(4)`, NPF, etc). The script is invoked with two arguments. The first is the word `grant` or `revoke` and the second is the IP address to which the request is to apply.
+  This will grant access for 15 minutes. This default can be changed with the `-d <seconds>` argument. Note that the firewall management script provided is for the `ipfw(2)` firewall system used by {Free,DragonFly}, and opens up access to port 22 (SSH). You'll have to write your own script for other firewall systems (iptables, `pf(4)`, NPF, etc). The script is invoked with two arguments. The first is the word `grant` or `revoke` and the second is the IP address to which the request is to apply.
   
 4. On the client, you can request access to the server with a command like this:
   ```
