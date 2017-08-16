@@ -54,6 +54,9 @@ impl UdpCodec for ClientCodec {
         let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
                                               &self.key_data.peer_public,
                                               &self.key_data.secret);
+        if let Err(e) = self.state.write() {
+            println!("state file write failed: {}", e)
+        }
         into.extend(encrypted_req_packet);
         remote_addr
     }
