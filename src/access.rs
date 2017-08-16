@@ -50,9 +50,9 @@ impl UdpCodec for ClientCodec {
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
         let msg = AccessReq::new(ReqType::TimedAccess, client_addr).to_msg();
 
-        self.state.nonce.increment_le_inplace();
-        into.extend(&self.state.nonce[..]);
-        let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
+        self.state.local_nonce.increment_le_inplace();
+        into.extend(&self.state.local_nonce[..]);
+        let encrypted_req_packet = box_::seal(&msg, &self.state.local_nonce,
                                               &self.key_data.peer_public,
                                               &self.key_data.secret);
         if let Err(e) = self.state.write() {

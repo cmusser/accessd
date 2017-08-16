@@ -17,7 +17,9 @@ pub struct State {
     #[serde(default, skip)]
     path: PathBuf,
     #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
-    pub nonce: Nonce,
+    pub local_nonce: Nonce,
+    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
+    pub remote_nonce: Nonce,
 }
 
 impl State {
@@ -26,10 +28,11 @@ impl State {
 
         let state = match File::open(&path) {
             Err(why) => {
-                println!("couldn't open {} ({}), so resetting nonce",
+                println!("couldn't open {} ({}), so resetting nonces",
                          path.display(), why.description());
                 let initial: [u8; NONCEBYTES] = [0; NONCEBYTES];
-                Ok(State { path: path, nonce: Nonce::from_slice(&initial).unwrap() })
+                Ok(State { path: path, local_nonce: Nonce::from_slice(&initial).unwrap(),
+                           remote_nonce: Nonce::from_slice(&initial).unwrap()})
             },
 
             Ok(mut file) => {

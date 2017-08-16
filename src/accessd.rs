@@ -54,10 +54,10 @@ impl<'packet> Payload<'packet> {
     }
 
     fn decrypt(&self, state: &mut State, key_data: &KeyData) -> Result<Vec<u8>, AccessError> {
-        if self.nonce.lt(&state.nonce) {
+        if self.nonce.lt(&state.remote_nonce) {
             Err(AccessError::ReusedNonce)
         } else {
-            state.nonce = self.nonce;
+            state.remote_nonce = self.nonce;
             state.write()?;
             box_::open(&self.encrypted_req, &self.nonce, &key_data.peer_public,
                        &key_data.secret).map_err(|_| { AccessError::InvalidCiphertext })
