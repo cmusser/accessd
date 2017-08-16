@@ -1,91 +1,107 @@
 extern crate access;
 extern crate clap;
+extern crate futures;
 extern crate sodiumoxide;
+extern crate tokio_core;
 
-use clap::App;
+use std::io;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::str::FromStr;
+use std::time::Duration;
+
 use access::req::{AccessReq, REQ_PORT, ReqType};
 use access::resp::{SessResp};
 use access::err::AccessError;
 use access::crypto::*;
+use clap::App;
+use futures::{Future, Sink, Stream};
 use sodiumoxide::crypto::box_;
-use std::net::{IpAddr, ToSocketAddrs, UdpSocket};
-use std::str::FromStr;
+use tokio_core::net::{UdpSocket, UdpCodec};
+use tokio_core::reactor::{Core, Timeout};
 
-struct AccessClient {
+struct ClientCodec {
     state: State,
     key_data: KeyData,
-    socket: Option<UdpSocket>,
 }
 
-impl AccessClient {
+impl ClientCodec {
     fn new(state_filename: &str, key_data_filename: &str) -> Result<Self, AccessError> {
         let state = State::read(state_filename)?;
         let key_data = KeyData::read(key_data_filename)?;
-        Ok(AccessClient {state: state, key_data: key_data, socket: None })
+        Ok(ClientCodec {state: state, key_data: key_data })
     }
+}
 
-    fn set_remote(&mut self, remote_str: &str, prefer_ipv4: bool) -> Result<&mut Self, AccessError> {
-        let mut addrs = format!("{}:{}", remote_str, REQ_PORT)
-            .to_socket_addrs()
-            .map_err(|e| { AccessError::IoError(e) })?;
+impl UdpCodec for ClientCodec {
+    type In = Result<SessResp, AccessError>;
+    type Out = (SocketAddr, IpAddr);
 
-        if prefer_ipv4 {
-            if let Some(ipv4) = addrs.find(|addr| { addr.is_ipv4() }) {
-                let socket = UdpSocket::bind("0.0.0.0:8079").and_then(|socket| {
-                    socket.connect(ipv4)?;
-                    Ok(socket)
-                }).map_err(|e| { AccessError::IoError(e) })?;
-                self.socket = Some(socket);
-            } else {
-                return Err(AccessError::NoIpv4Addr);
-            }
-        } else {
-            let addr = addrs.nth(0).unwrap();
-            let bind_addr = if addr.is_ipv4() { "0.0.0.0" } else { "[::]" };
-            let socket = UdpSocket::bind(format!("{}:8079", bind_addr)).and_then(|socket| {
-                socket.connect(addr)?;
-                Ok(socket)
-            }).map_err(|e| { AccessError::IoError(e) })?;
-            self.socket = Some(socket);
-        };
-
-        Ok(self)
-    }
-
-    fn send_req(&mut self, client_addr_str: &str) -> Result<(), AccessError> {
-
-        match IpAddr::from_str(client_addr_str) {
-            Ok(client_addr) => {
-                let msg = AccessReq::new(ReqType::TimedAccess, client_addr).to_msg();
-                if let Some(ref socket) = self.socket {
-                    self.state.nonce.increment_le_inplace();
-                    let mut payload = Vec::new();
-                    payload.extend(&self.state.nonce[..]);
-                    let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
-                                                          &self.key_data.peer_public,
-                                                          &self.key_data.secret);
-                    payload.extend(encrypted_req_packet);
-                    socket.send(&payload).map_err(|e| { AccessError::IoError(e) })?;
-                    println!("access request for {} sent", client_addr);
-                    self.state.write()?;
-                    let mut recv_packet = [0; 10];
-                    match socket.recv(&mut recv_packet) {
-                        Ok(_) => {
-                            match SessResp::from_msg(&recv_packet) {
-                                Ok(recv_resp) => println!("{}",  recv_resp),
-                                Err(e) => println!("error: {}", e),
-                            }
-                            Ok(())
-                        },
-                        Err(e) => Err(AccessError::IoError(e)),
-                    }
-                } else {
-                    Err(AccessError::NoRemoteSet)
-                }
+    fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
+        Ok(match SessResp::from_msg(&buf) {
+            Ok(recv_resp) => {
+                println!("{}: {}", addr, recv_resp);
+                Ok(recv_resp)
             },
-            Err(e) => Err(AccessError::InvalidAddr(e)),
-        }
+            Err(e) => Err(e),
+        })
     }
+
+    fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        let msg = AccessReq::new(ReqType::TimedAccess, client_addr).to_msg();
+
+        self.state.nonce.increment_le_inplace();
+        into.extend(&self.state.nonce[..]);
+        let encrypted_req_packet = box_::seal(&msg, &self.state.nonce,
+                                              &self.key_data.peer_public,
+                                              &self.key_data.secret);
+        into.extend(encrypted_req_packet);
+        remote_addr
+    }
+}
+
+fn get_remote_addr(remote_str: &str, prefer_ipv4: bool) -> Result<(SocketAddr, SocketAddr), AccessError> {
+
+    let mut addrs = format!("{}:{}", remote_str, REQ_PORT).to_socket_addrs()
+        .map_err(|e| { AccessError::IoError(e) })?;
+
+    let remote_addr = if prefer_ipv4 {
+        if let Some(ipv4) = addrs.find(|addr| { addr.is_ipv4() }) {
+                ipv4
+        } else {
+            return Err(AccessError::NoIpv4Addr);
+        }
+    } else {
+        addrs.nth(0).unwrap()
+    };
+
+    let bind_addr_str = if remote_addr.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+    Ok((bind_addr_str.to_socket_addrs().unwrap().nth(0).unwrap(), remote_addr))
+}
+
+fn get_client_addr(client_addr_str: &str) -> Result<IpAddr, AccessError> {
+    let client_addr = IpAddr::from_str(client_addr_str).map_err(|e| { AccessError::InvalidAddr(e) })?;
+    Ok(client_addr)
+}
+
+fn run(state_filename: &str, key_data_filename: &str, remote_str: &str,
+           prefer_ipv4: bool, client_addr_str: &str) -> Result<(), AccessError> {
+
+    let mut core = Core::new().map_err(|e| { AccessError::IoError(e) })?;
+    let handle = core.handle();
+
+    let (bind_addr, remote_addr) = get_remote_addr(remote_str, prefer_ipv4)?;
+    let client_addr = get_client_addr(client_addr_str)?;
+    let codec = ClientCodec::new(state_filename, key_data_filename)?;
+    let sock = UdpSocket::bind(&bind_addr, &handle)
+        .map_err(|e| { AccessError::IoError(e) })?;
+    let (framed_tx, framed_rx) = sock.framed(codec).split();
+
+    let send_req = framed_tx.send((remote_addr, client_addr))
+        .and_then(|_| { framed_rx.take(1).into_future().map_err(|(e,_)| e) })
+        .select2(Timeout::new(Duration::from_secs(5), &handle).unwrap()
+                 .then(|t| { println!("no response from {}", remote_addr); t }));
+
+    Ok(drop(core.run(send_req)))
 }
 
 fn main() {
@@ -101,19 +117,14 @@ fn main() {
                                -4, --prefer-ipv4 'Prefer IPv4 address'
                               <HOST>              'remote host to access'").get_matches();
 
-    let remote_addr_str = matches.value_of("HOST").unwrap();
+    let remote_str = matches.value_of("HOST").unwrap();
     let prefer_ipv4 = matches.is_present("prefer-ipv4");
-    let client_addr = matches.value_of("addr").unwrap_or("0.0.0.0");
+    let client_addr_str = matches.value_of("addr").unwrap_or("0.0.0.0");
     let state_filename = matches.value_of("state-file").unwrap_or("access_state.yaml");
     let key_data_filename = matches.value_of("key-data-file").unwrap_or("access_keydata.yaml");
 
-    let client = AccessClient::new(state_filename, key_data_filename);
-    match client {
-        Ok(mut c) => {
-            c.set_remote(remote_addr_str, prefer_ipv4)
-                .and_then(|mut c| c.send_req(client_addr))
-                .unwrap_or_else(|err| { println!("failed: {}", err) });
-        },
-        Err(e) => println!("failed: {}", e),
+    if let Err(e) = run(state_filename, key_data_filename, remote_str, prefer_ipv4,
+                        client_addr_str) {
+        println!("failed: {}", e);
     }
 }
