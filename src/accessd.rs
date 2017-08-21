@@ -22,7 +22,7 @@ use access::keys::KeyData;
 use access::state::State;
 use access::payload::Payload;
 use access::err::AccessError;
-use access::req::{AccessReq, REQ_PORT};
+use access::req::{SessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::App;
 use futures::{future, Future, Stream};
@@ -99,7 +99,7 @@ impl UdpCodec for ServerCodec {
             payload.decrypt(&mut self.state, &self.key_data)
         }) {
             Ok(req_packet) => {
-                match AccessReq::from_msg(&req_packet) {
+                match SessReq::from_msg(&req_packet) {
                     Ok(recv_req) => {
                         let client_ip =
                             if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };

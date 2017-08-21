@@ -1,4 +1,4 @@
-use data_encoding::{base16};
+use data_encoding::base16;
 use serde::Serializer;
 
 pub fn u8vec_as_hex<T, S>(data: &T, serializer: S) -> Result<S::Ok, S::Error>

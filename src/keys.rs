@@ -8,7 +8,7 @@ use std::path::Path;
 
 use ::as_hex::u8vec_as_hex;
 use ::err::AccessError;
-use data_encoding::{base16};
+use data_encoding::base16;
 use serde::{Serializer, Deserialize, Deserializer};
 use sodiumoxide::crypto::box_::*;
 

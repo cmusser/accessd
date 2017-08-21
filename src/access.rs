@@ -9,7 +9,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
 
-use access::req::{AccessReq, REQ_PORT, ReqType};
+use access::req::{SessReq, REQ_PORT, ReqType};
 use access::resp::{SessResp};
 use access::err::AccessError;
 use access::keys::KeyData;
@@ -59,7 +59,7 @@ impl UdpCodec for ClientCodec {
     }
 
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        let msg = AccessReq::new(ReqType::TimedAccess, client_addr).to_msg();
+        let msg = SessReq::new(ReqType::TimedAccess, client_addr).to_msg();
 
         self.state.local_nonce.increment_le_inplace();
         into.extend(&self.state.local_nonce[..]);
@@ -74,7 +74,7 @@ impl UdpCodec for ClientCodec {
     }
 }
 
-fn get_remote_addr(remote_str: &str, prefer_ipv4: bool) -> Result<(SocketAddr, SocketAddr), AccessError> {
+fn get_remote_addr(remote_str: &str, prefer_ipv4: bool) -> Result<SocketAddr, AccessError> {
 
     let mut addrs = format!("{}:{}", remote_str, REQ_PORT).to_socket_addrs()
         .map_err(|e| { AccessError::IoError(e) })?;
@@ -89,8 +89,19 @@ fn get_remote_addr(remote_str: &str, prefer_ipv4: bool) -> Result<(SocketAddr, S
         addrs.nth(0).unwrap()
     };
 
-    let bind_addr_str = if remote_addr.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
-    Ok((bind_addr_str.to_socket_addrs().unwrap().nth(0).unwrap(), remote_addr))
+    Ok(remote_addr)
+}
+
+fn get_bind_addr_for_remote(remote_addr: &SocketAddr) -> Result<SocketAddr, AccessError> {
+    let bind_addr_str = if remote_addr.is_ipv4() {
+        "0.0.0.0:0"
+    } else if remote_addr.is_ipv6(){
+        "[::]:0"
+    } else {
+        return Err(AccessError::NoIpv4Addr);
+    };
+
+    Ok(bind_addr_str.to_socket_addrs().unwrap().nth(0).unwrap())
 }
 
 fn get_client_addr(client_addr_str: &str) -> Result<IpAddr, AccessError> {
@@ -104,7 +115,8 @@ fn run(state_filename: &str, key_data_filename: &str, remote_str: &str,
     let mut core = Core::new().map_err(|e| { AccessError::IoError(e) })?;
     let handle = core.handle();
 
-    let (bind_addr, remote_addr) = get_remote_addr(remote_str, prefer_ipv4)?;
+    let remote_addr = get_remote_addr(remote_str, prefer_ipv4)?;
+    let bind_addr = get_bind_addr_for_remote(&remote_addr)?;
     let client_addr = get_client_addr(client_addr_str)?;
     let codec = ClientCodec::new(state_filename, key_data_filename)?;
     let sock = UdpSocket::bind(&bind_addr, &handle)

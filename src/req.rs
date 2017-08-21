@@ -57,23 +57,23 @@ named!(addr <&[u8], IpAddr>, switch!(addr_family,
                                      AddrFamily::V4 => call!(addr4) |
                                      AddrFamily::V6 => call!(addr6))
 );
-named!(access_msg <&[u8], AccessReq>, do_parse!(
+named!(access_msg <&[u8], SessReq>, do_parse!(
     t: req_type >>
     a: addr >>
-    (AccessReq {req_type: t, addr: a})
+    (SessReq {req_type: t, addr: a})
 ));
 
-pub struct AccessReq {
+pub struct SessReq {
     pub req_type: ReqType,
     pub addr: IpAddr,
 }
 
-impl AccessReq {
+impl SessReq {
     pub fn new(req_type: ReqType, client_addr: IpAddr) -> Self {
-        AccessReq {req_type: req_type, addr: client_addr }
+        SessReq {req_type: req_type, addr: client_addr }
     }
 
-    pub fn from_msg(msg: &[u8]) -> Result<AccessReq, AccessError> {
+    pub fn from_msg(msg: &[u8]) -> Result<SessReq, AccessError> {
         match access_msg(&msg) {
             IResult::Done(_, req) => { Ok(req) },
             IResult::Incomplete(needed) => {
@@ -102,14 +102,9 @@ impl AccessReq {
             }
         }
     }
-
-    pub fn blank() -> AccessReq {
-        AccessReq {req_type: ReqType::TimedAccess,
-                  addr: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))}
-    }
 }
 
-impl fmt::Display for AccessReq {
+impl fmt::Display for SessReq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{} for {}", self.req_type, self.addr)
     }
@@ -118,7 +113,7 @@ impl fmt::Display for AccessReq {
 #[test]
 fn v4_access_msg() {
     let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0, 1];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
@@ -128,14 +123,14 @@ fn v6_access_msg() {
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
                    0xbb, 0x33, 0xa8, 0xf3];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "Only 5 provided")]
 fn v4_access_msg_2short() {
     let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
@@ -146,14 +141,14 @@ fn v6_access_msg_2short() {
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
                    0xbb];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "Map on Option")]
 fn v4_invalid_req_msg() {
     let msg = vec![42, AF_INET, 127, 0, 0, 1];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
 
 #[test]
@@ -164,5 +159,5 @@ fn invalid_access_msg() {
                    0x1f, 0x05, 0x2, 0x04,
                    0x85, 0x3c, 0xa3, 0x3c,
                    0xbb, 0x33, 0xa8, 0xf3];
-    AccessReq::from_msg(&msg).unwrap();
+    SessReq::from_msg(&msg).unwrap();
 }
