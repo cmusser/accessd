@@ -1,7 +1,6 @@
 extern crate access;
 extern crate clap;
 extern crate futures;
-extern crate sodiumoxide;
 extern crate tokio_core;
 extern crate tokio_process;
 
@@ -18,13 +17,12 @@ use std::time::{Duration, Instant};
 
 use access::keys::KeyData;
 use access::state::State;
-use access::payload::Payload;
+use access::packet;
 use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::App;
 use futures::{future, Future, Stream};
-use sodiumoxide::crypto::box_;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
@@ -93,9 +91,7 @@ impl UdpCodec for ServerCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let sess_result = match Payload::from_packet(buf).and_then(|payload| {
-            payload.decrypt(&mut self.state, &self.key_data)
-        }) {
+        let sess_result = match packet::open(buf, &mut self.state, &self.key_data) {
             Ok(req_packet) => {
                 match SessReq::from_msg(&req_packet) {
                     Ok(recv_req) => {
@@ -130,10 +126,8 @@ impl UdpCodec for ServerCodec {
                 into.extend(&self.state.local_nonce[..]);
                 match resp.to_msg() {
                     Ok(msg) => {
-                        let encrypted_req_packet = box_::seal(&msg,
-                                                              &self.state.local_nonce,
-                                                              &self.key_data.peer_public,
-                                                              &self.key_data.secret);
+                        let encrypted_req_packet = packet::create(&msg, &mut self.state,
+                                                                  &self.key_data);
                         if let Err(e) = self.state.write() {
                             println!("state file write failed: {}", e)
                         }

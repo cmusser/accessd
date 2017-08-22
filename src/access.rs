@@ -13,11 +13,10 @@ use access::req::{SessReq, REQ_PORT, ReqType};
 use access::resp::{SessResp};
 use access::err::AccessError;
 use access::keys::KeyData;
-use access::payload::Payload;
+use access::packet;
 use access::state::State;
 use clap::App;
 use futures::{Future, Sink, Stream};
-use sodiumoxide::crypto::box_;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Timeout};
 
@@ -40,9 +39,7 @@ impl UdpCodec for ClientCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let sess_result = match Payload::from_packet(buf).and_then(|payload| {
-            payload.decrypt(&mut self.state, &self.key_data)
-        }) {
+        let sess_result = match packet::open(buf, &mut self.state, &self.key_data) {
             Ok(resp_packet) => {
                 match SessResp::from_msg(&resp_packet) {
                     Ok(recv_resp) => {
@@ -64,9 +61,8 @@ impl UdpCodec for ClientCodec {
 
         match SessReq::new(ReqType::TimedAccess, client_addr).to_msg() {
             Ok(msg) => {
-                let encrypted_req_packet = box_::seal(&msg, &self.state.local_nonce,
-                                                      &self.key_data.peer_public,
-                                                      &self.key_data.secret);
+                let encrypted_req_packet = packet::create(&msg, &mut self.state,
+                                                              &self.key_data);
                 if let Err(e) = self.state.write() {
                     println!("state file write failed: {}", e)
                 }

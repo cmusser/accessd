@@ -10,7 +10,7 @@ extern crate sodiumoxide;
 pub mod as_hex;
 pub mod err;
 pub mod keys;
-pub mod payload;
+pub mod packet;
 pub mod req;
 pub mod resp;
 pub mod state;
