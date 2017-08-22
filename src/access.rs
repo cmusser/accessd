@@ -59,17 +59,21 @@ impl UdpCodec for ClientCodec {
     }
 
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        let msg = SessReq::new(ReqType::TimedAccess, client_addr).to_msg();
-
         self.state.local_nonce.increment_le_inplace();
         into.extend(&self.state.local_nonce[..]);
-        let encrypted_req_packet = box_::seal(&msg, &self.state.local_nonce,
-                                              &self.key_data.peer_public,
-                                              &self.key_data.secret);
-        if let Err(e) = self.state.write() {
-            println!("state file write failed: {}", e)
+
+        match SessReq::new(ReqType::TimedAccess, client_addr).to_msg() {
+            Ok(msg) => {
+                let encrypted_req_packet = box_::seal(&msg, &self.state.local_nonce,
+                                                      &self.key_data.peer_public,
+                                                      &self.key_data.secret);
+                if let Err(e) = self.state.write() {
+                    println!("state file write failed: {}", e)
+                }
+                into.extend(encrypted_req_packet);
+            },
+            Err(e) => println!("packet encoding failed: {}", e),
         }
-        into.extend(encrypted_req_packet);
         remote_addr
     }
 }

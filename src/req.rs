@@ -2,13 +2,13 @@ use std::fmt;
 use std::net::*;
 
 use ::err::AccessError;
-use nom::*;
+use serde_cbor::de;
+use serde_cbor::ser;
 
 pub const REQ_PORT: u16 = 7387;
 pub const TIMED_ACCESS: u8 = 1;
-pub const AF_INET: u8 = 1;
-pub const AF_INET6: u8 = 2;
 
+#[derive(Serialize, Deserialize)]
 pub enum ReqType {
     TimedAccess
 }
@@ -21,48 +21,7 @@ impl fmt::Display for ReqType {
     }
 }
 
-fn to_req_type (i: u8) -> Option<ReqType> {
-    match i {
-        TIMED_ACCESS => Some(ReqType::TimedAccess),
-        _ => None,
-    }
-}
-
-pub enum AddrFamily {
-    V4,
-    V6
-}
-
-fn to_addr_family (i: u8) -> Option<AddrFamily> {
-    match i {
-        AF_INET => Some(AddrFamily::V4),
-        AF_INET6 => Some(AddrFamily::V6),
-        _ => None,
-    }
-}
-
-fn u8vec_to_ipv4(b: &[u8]) -> IpAddr {
-    IpAddr::V4(Ipv4Addr::new(b[0], b[1], b[2], b[3]))
-}
-
-fn u16vec_to_ipv6(b: Vec<u16>) -> IpAddr {
-    IpAddr::V6(Ipv6Addr::new(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]))
-}
-
-named!(req_type <&[u8], ReqType>, map_opt!(be_u8, to_req_type));
-named!(addr_family <&[u8], AddrFamily>, map_opt!(be_u8, to_addr_family));
-named!(addr4 <&[u8], IpAddr>, map!(take!(4), u8vec_to_ipv4));
-named!(addr6 <&[u8], IpAddr>, map!(count!(be_u16, 8), u16vec_to_ipv6));
-named!(addr <&[u8], IpAddr>, switch!(addr_family,
-                                     AddrFamily::V4 => call!(addr4) |
-                                     AddrFamily::V6 => call!(addr6))
-);
-named!(access_msg <&[u8], SessReq>, do_parse!(
-    t: req_type >>
-    a: addr >>
-    (SessReq {req_type: t, addr: a})
-));
-
+#[derive(Serialize, Deserialize)]
 pub struct SessReq {
     pub req_type: ReqType,
     pub addr: IpAddr,
@@ -74,33 +33,11 @@ impl SessReq {
     }
 
     pub fn from_msg(msg: &[u8]) -> Result<SessReq, AccessError> {
-        match access_msg(&msg) {
-            IResult::Done(_, req) => { Ok(req) },
-            IResult::Incomplete(needed) => {
-                match needed {
-                    Needed::Unknown => Err(AccessError::ShortReq),
-                    Needed::Size(s) =>  Err(AccessError::ShortReqNeeded(s))
-                }
-            },
-            IResult::Error(error) => Err(AccessError::InvalidReq(error)) ,
-        }
+        de::from_slice(msg).map_err(|e| { AccessError::InvalidCbor(e) })
     }
 
-    pub fn to_msg(&self) -> Vec<u8> {
-        match self.addr {
-            IpAddr::V4(addr4) => {
-                let mut msg = Vec::with_capacity(6);
-                msg.extend_from_slice(&[TIMED_ACCESS, AF_INET]);
-                msg.extend_from_slice(&addr4.octets());
-                msg
-            },
-            IpAddr::V6(addr6) => {
-                let mut msg = Vec::with_capacity(18);
-                msg.extend_from_slice(&[TIMED_ACCESS, AF_INET6]);
-                msg.extend_from_slice(&addr6.octets());
-                msg
-            }
-        }
+    pub fn to_msg(&self) -> Result<Vec<u8>, AccessError> {
+        ser::to_vec(self).map_err(|e| { AccessError::InvalidCbor(e) })
     }
 }
 
@@ -108,56 +45,4 @@ impl fmt::Display for SessReq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{} for {}", self.req_type, self.addr)
     }
-}
-
-#[test]
-fn v4_access_msg() {
-    let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0, 1];
-    SessReq::from_msg(&msg).unwrap();
-}
-
-#[test]
-fn v6_access_msg() {
-    let msg = vec![TIMED_ACCESS, AF_INET6,
-                   0x20, 0x01, 0x4, 0x70,
-                   0x1f, 0x05, 0x2, 0x04,
-                   0x85, 0x3c, 0xa3, 0x3c,
-                   0xbb, 0x33, 0xa8, 0xf3];
-    SessReq::from_msg(&msg).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "Only 5 provided")]
-fn v4_access_msg_2short() {
-    let msg = vec![TIMED_ACCESS, AF_INET, 127, 0, 0];
-    SessReq::from_msg(&msg).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "Only 15 provided")]
-fn v6_access_msg_2short() {
-    let msg = vec![TIMED_ACCESS, AF_INET6,
-                   0x20, 0x01, 0x4, 0x70,
-                   0x1f, 0x05, 0x2, 0x04,
-                   0x85, 0x3c, 0xa3, 0x3c,
-                   0xbb];
-    SessReq::from_msg(&msg).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "Map on Option")]
-fn v4_invalid_req_msg() {
-    let msg = vec![42, AF_INET, 127, 0, 0, 1];
-    SessReq::from_msg(&msg).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "Switch")]
-fn invalid_access_msg() {
-    let msg = vec![TIMED_ACCESS, 42,
-                   0x20, 0x01, 0x4, 0x70,
-                   0x1f, 0x05, 0x2, 0x04,
-                   0x85, 0x3c, 0xa3, 0x3c,
-                   0xbb, 0x33, 0xa8, 0xf3];
-    SessReq::from_msg(&msg).unwrap();
 }

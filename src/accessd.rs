@@ -1,11 +1,9 @@
-#[macro_use]
-#[allow(unused)]
-extern crate clap;
 extern crate access;
-extern crate tokio_core;
-extern crate tokio_process;
+extern crate clap;
 extern crate futures;
 extern crate sodiumoxide;
+extern crate tokio_core;
+extern crate tokio_process;
 
 use std::cell::RefCell;
 use std::clone::Clone;
@@ -130,14 +128,19 @@ impl UdpCodec for ServerCodec {
 
                 self.state.local_nonce.increment_le_inplace();
                 into.extend(&self.state.local_nonce[..]);
-                let encrypted_req_packet = box_::seal(&resp.to_msg(),
-                                                      &self.state.local_nonce,
-                                                      &self.key_data.peer_public,
-                                                      &self.key_data.secret);
-                if let Err(e) = self.state.write() {
-                    println!("state file write failed: {}", e)
+                match resp.to_msg() {
+                    Ok(msg) => {
+                        let encrypted_req_packet = box_::seal(&msg,
+                                                              &self.state.local_nonce,
+                                                              &self.key_data.peer_public,
+                                                              &self.key_data.secret);
+                        if let Err(e) = self.state.write() {
+                            println!("state file write failed: {}", e)
+                        }
+                        into.extend(encrypted_req_packet);
+                    },
+                    Err(e) => println!("packet encoding failed: {}", e),
                 }
-                into.extend(encrypted_req_packet);
             },
             Err(e) => println!("invalid sess from {:?}: {}", addr, e),
         }

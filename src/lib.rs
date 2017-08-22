@@ -1,9 +1,9 @@
 extern crate byteorder;
 extern crate data_encoding;
-extern crate nom;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
+extern crate serde_cbor;
 extern crate serde_yaml;
 extern crate sodiumoxide;
 
