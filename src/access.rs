@@ -34,31 +34,21 @@ impl ClientCodec {
 }
 
 impl UdpCodec for ClientCodec {
-    type In = Result<SessResp, AccessError>;
+    type In = ();
     type Out = (SocketAddr, IpAddr);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let sess_result = match packet::open(buf, &mut self.state, &self.key_data) {
+        match packet::open(buf, &mut self.state, &self.key_data) {
             Ok(resp_packet) => {
                 match SessResp::from_msg(&resp_packet) {
-                    Ok(recv_resp) => {
-                        println!("{}: {}", addr, recv_resp);
-                        Ok(recv_resp)
-                    },
-                    Err(e) => {
-                        println!("couldn't interpret response: {}", e);
-                        Err(e)
-                    },
-                }
+                    Ok(recv_resp) => println!("{}: {}", addr, recv_resp),
+                    Err(e) => println!("couldn't interpret response: {}", e),
+                };
             },
-            Err(e) => {
-                println!("decrypt failed: {}", e);
-                Err(e)
-            },
-        };
-
-        Ok(sess_result)
+            Err(e) => println!("decrypt failed: {}", e),
+        }
+        Ok(())
     }
 
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
