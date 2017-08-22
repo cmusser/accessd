@@ -46,10 +46,16 @@ impl UdpCodec for ClientCodec {
                         println!("{}: {}", addr, recv_resp);
                         Ok(recv_resp)
                     },
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        println!("couldn't interpret response: {}", e);
+                        Err(e)
+                    },
                 }
             },
-            Err(e) => Err(e)
+            Err(e) => {
+                println!("decrypt failed: {}", e);
+                Err(e)
+            },
         };
 
         Ok(sess_result)
@@ -68,7 +74,7 @@ impl UdpCodec for ClientCodec {
                 }
                 into.extend(encrypted_req_packet);
             },
-            Err(e) => println!("packet encoding failed: {}", e),
+            Err(e) => println!("request creation failed: {}", e),
         }
         remote_addr
     }
