@@ -128,7 +128,10 @@ fn run(state_filename: &str, key_data_filename: &str, remote_str: &str,
 }
 
 fn main() {
-
+    let default_state_filename = format!("{}/.access/state.yaml",
+                                         std::env::home_dir().unwrap().display());
+    let default_key_data_filename = format!("{}/.access/keydata.yaml",
+                                         std::env::home_dir().unwrap().display());
     let matches = App::new("access")
                           .version("1.0")
                           .author("Chuck Musser <cmusser@sonic.net>")
@@ -143,8 +146,8 @@ fn main() {
     let remote_str = matches.value_of("HOST").unwrap();
     let prefer_ipv4 = matches.is_present("prefer-ipv4");
     let client_addr_str = matches.value_of("addr").unwrap_or("0.0.0.0");
-    let state_filename = matches.value_of("state-file").unwrap_or("access_state.yaml");
-    let key_data_filename = matches.value_of("key-data-file").unwrap_or("access_keydata.yaml");
+    let state_filename = matches.value_of("state-file").unwrap_or(&default_state_filename);
+    let key_data_filename = matches.value_of("key-data-file").unwrap_or(&default_key_data_filename);
 
     if let Err(e) = run(state_filename, key_data_filename, remote_str, prefer_ipv4,
                         client_addr_str) {

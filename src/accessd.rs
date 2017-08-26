@@ -291,6 +291,8 @@ fn run(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration
 
 fn main() {
 
+    let default_state_filename = "/var/db/accessd_state.yaml";
+    let default_keydata_filename = "/etc/accessd_keydata.yaml";
     let matches = App::new("accessd")
         .version("1.0")
         .author("Chuck Musser <cmusser@sonic.net>")
@@ -303,8 +305,8 @@ fn main() {
 
     let access_cmd = matches.value_of("CMD").unwrap();
     let duration = matches.value_of("duration").unwrap_or("900").parse::<u64>().unwrap();
-    let state_filename = matches.value_of("state-file").unwrap_or("accessd_state.yaml");
-    let key_data_filename = matches.value_of("key-data-file").unwrap_or("accessd_keydata.yaml");
+    let state_filename = matches.value_of("state-file").unwrap_or(default_state_filename);
+    let key_data_filename = matches.value_of("key-data-file").unwrap_or(default_keydata_filename);
 
     if let Err(e) = run(state_filename, key_data_filename, access_cmd, duration) {
         println!("failed: {}", e);
