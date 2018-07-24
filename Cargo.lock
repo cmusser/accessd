@@ -1,6 +1,6 @@
-[root]
+[[package]]
 name = "accessd"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.25.0 (registry+https://github.com/rust-lang/crates.io-index)",

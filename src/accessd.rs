@@ -294,7 +294,7 @@ fn main() {
     let default_state_filename = "/var/db/accessd_state.yaml";
     let default_keydata_filename = "/etc/accessd_keydata.yaml";
     let matches = App::new("accessd")
-        .version("1.0")
+        .version("1.0.0")
         .author("Chuck Musser <cmusser@sonic.net>")
         .about("Grant access to host")
         .args_from_usage(
