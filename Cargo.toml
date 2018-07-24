@@ -1,11 +1,12 @@
 [package]
 name = "accessd"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["cmusser@sonic.net"]
 
 [dependencies]
 byteorder = "1.0.0"
 clap = "2"
+daemonize = "0.3.0"
 data-encoding = "1.2.0"
 futures = "0.1"
 serde = "1.0"

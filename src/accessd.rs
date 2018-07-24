@@ -1,5 +1,6 @@
 extern crate access;
 extern crate clap;
+extern crate daemonize;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_process;
@@ -8,6 +9,7 @@ use std::cell::RefCell;
 use std::clone::Clone;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::*;
+use std::fs::File;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::process::Command;
@@ -22,6 +24,7 @@ use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::App;
+use daemonize::Daemonize;
 use futures::{future, Future, Stream};
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
@@ -294,19 +297,32 @@ fn main() {
     let default_state_filename = "/var/db/accessd_state.yaml";
     let default_keydata_filename = "/etc/accessd_keydata.yaml";
     let matches = App::new("accessd")
-        .version("1.0.0")
+        .version("1.0.1")
         .author("Chuck Musser <cmusser@sonic.net>")
         .about("Grant access to host")
         .args_from_usage(
             "-d, --duration=[seconds] 'duration of access period (default: 900)'
              -s, --state-file=[filename] 'state file'
              -k, --key-data-file=[filename] 'key file'
+             -f, --foreground 'run in foreground'
              <CMD>              'command to grant/revoke access'").get_matches();
 
     let access_cmd = matches.value_of("CMD").unwrap();
     let duration = matches.value_of("duration").unwrap_or("900").parse::<u64>().unwrap();
     let state_filename = matches.value_of("state-file").unwrap_or(default_state_filename);
     let key_data_filename = matches.value_of("key-data-file").unwrap_or(default_keydata_filename);
+    if ! matches.is_present("foreground") {
+        let stdout = File::create("/var/log/accessd.out").unwrap();
+        let stderr = File::create("/var/log/accessd.err").unwrap();
+        let daemonize = Daemonize::new()
+            .pid_file("/var/run/accessd.pid")
+            .stdout(stdout)
+            .stderr(stderr);
+        match daemonize.start() {
+            Ok(_) => println!("accessd starting"),
+            Err(e) => eprintln!("Error: {}", e),
+        }
+    }
 
     if let Err(e) = run(state_filename, key_data_filename, access_cmd, duration) {
         println!("failed: {}", e);

@@ -133,7 +133,7 @@ fn main() {
     let default_key_data_filename = format!("{}/.access/keydata.yaml",
                                          std::env::home_dir().unwrap().display());
     let matches = App::new("access")
-                          .version("1.0.0")
+                          .version("1.0.1")
                           .author("Chuck Musser <cmusser@sonic.net>")
                           .about("Sends access request to host")
                           .args_from_usage(
