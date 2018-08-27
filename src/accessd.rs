@@ -155,6 +155,11 @@ fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, req_
 
     if state.cur_req_id >= req_sess.req_id {
         return SessResp::new(SessReqAction::DenyDuplicateRequest, req_sess.req_id, 0, 0)
+    } else {
+        state.cur_req_id = req_sess.req_id;
+        if let Err(e) = state.write() {
+            println!("state file write failed: {}", e)
+        }
     }
 
     let client_addr = req_sess.req_addr.clone();
@@ -310,7 +315,7 @@ fn main() {
         .author("Chuck Musser <cmusser@sonic.net>")
         .about("Grant access to host")
         .arg(Arg::with_name("duration").empty_values(false)
-             .short("d").long("durationr").default_value(DEFAULT_DURATION)
+             .short("d").long("duration").default_value(DEFAULT_DURATION)
              .help("Specify the client address"))
         .arg(Arg::with_name("state-file").empty_values(false)
              .short("s").long("state-file").default_value(DEFAULT_STATE_FILENAME)
@@ -318,7 +323,7 @@ fn main() {
         .arg(Arg::with_name("key-data-file").empty_values(false)
              .short("k").long("key-data-file").default_value(DEFAULT_KEYDATA_FILENAME)
              .help("Path to key data file"))
-        .arg(Arg::with_name("prefer-ipv4")
+        .arg(Arg::with_name("foreground")
              .short("f").long("foreground")
              .help("Run in foreground"))
         .arg(Arg::with_name("CMD")
