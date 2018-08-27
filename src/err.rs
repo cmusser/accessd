@@ -7,7 +7,6 @@ use sodiumoxide::crypto::box_::NONCEBYTES;
 #[derive(Debug)]
 pub enum AccessError {
     InvalidNonce,
-    ReusedNonce,
     InvalidCiphertext,
     FileError(String),
     SerializeError(serde_yaml::Error),
@@ -23,8 +22,6 @@ impl fmt::Display for AccessError {
         match *self {
             AccessError::InvalidNonce =>
                 write!(f, "Invalid nonce data, make sure data is {} bytes", NONCEBYTES),
-            AccessError::ReusedNonce =>
-                write!(f, "Received nonce less than current (possible replay)"),
             AccessError::InvalidCiphertext =>
                 write!(f, "Ciphertext failed verification"),
             AccessError::FileError(ref str) => write!(f, "{}", str),

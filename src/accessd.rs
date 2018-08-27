@@ -2,6 +2,7 @@ extern crate access;
 extern crate clap;
 extern crate daemonize;
 extern crate futures;
+extern crate sodiumoxide;
 extern crate tokio_core;
 extern crate tokio_process;
 
@@ -26,6 +27,8 @@ use access::resp::{SessReqAction, SessResp};
 use clap::{App, Arg};
 use daemonize::Daemonize;
 use futures::{future, Future, Stream};
+use sodiumoxide::crypto::box_::{Nonce, NONCEBYTES};
+use sodiumoxide::randombytes::randombytes;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
@@ -99,7 +102,7 @@ impl UdpCodec for ServerCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let sess_result = match packet::open(buf, &mut self.state, &self.key_data) {
+        let sess_result = match packet::open(buf, &self.key_data) {
             Ok(req_packet) => {
                 match SessReq::from_msg(&req_packet) {
                     Ok(recv_req) => {
@@ -131,12 +134,11 @@ impl UdpCodec for ServerCodec {
                     deny =>  deny,
                 };
 
-                self.state.local_nonce.increment_le_inplace();
-                into.extend(&self.state.local_nonce[..]);
+                let nonce: Nonce = Nonce::from_slice(&randombytes(NONCEBYTES)).unwrap();
+                into.extend(&nonce[..]);
                 match resp.to_msg() {
                     Ok(msg) => {
-                        let encrypted_req_packet = packet::create(&msg, &mut self.state,
-                                                                  &self.key_data);
+                        let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data);
                         if let Err(e) = self.state.write() {
                             println!("state file write failed: {}", e)
                         }

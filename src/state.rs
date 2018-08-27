@@ -6,21 +6,13 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
-use ::as_hex::u8vec_as_hex;
 use ::err::AccessError;
-use data_encoding::base16;
-use serde::{Deserialize, Deserializer};
-use sodiumoxide::crypto::box_::{Nonce, NONCEBYTES};
 
 #[derive(Serialize, Deserialize)]
 pub struct State {
     #[serde(default, skip)]
     path: PathBuf,
     pub cur_req_id: u64,
-    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
-    pub local_nonce: Nonce,
-    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
-    pub remote_nonce: Nonce,
 }
 
 impl State {
@@ -31,10 +23,7 @@ impl State {
             Err(why) => {
                 println!("couldn't open {} ({}), so resetting nonces",
                          path.display(), why.description());
-                let initial: [u8; NONCEBYTES] = [0; NONCEBYTES];
-                Ok(State { path: path, cur_req_id: 0,
-                           local_nonce: Nonce::from_slice(&initial).unwrap(),
-                           remote_nonce: Nonce::from_slice(&initial).unwrap()})
+                Ok(State { path: path, cur_req_id: 0 })
             },
 
             Ok(mut file) => {
@@ -69,14 +58,4 @@ impl State {
                                          self.path.display(), e.description()))
         })
     }
-}
-
-fn nonce_from_hex<'de, D>(deserializer: D) -> Result<Nonce, D::Error>
-    where D: Deserializer<'de>
-{
-    use serde::de::Error;
-    String::deserialize(deserializer)
-        .and_then(|string| base16::decode(&string.as_bytes()).map_err(|err| Error::custom(err.to_string())))
-        .map(|bytes| Nonce::from_slice(&bytes))
-        .and_then(|opt| opt.ok_or_else(|| Error::custom("failed to deserialize public key")))
 }
