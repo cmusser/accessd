@@ -24,12 +24,13 @@ impl fmt::Display for ReqType {
 #[derive(Serialize, Deserialize)]
 pub struct SessReq {
     pub req_type: ReqType,
+    pub req_id: u64,
     pub addr: IpAddr,
 }
 
 impl SessReq {
-    pub fn new(req_type: ReqType, client_addr: IpAddr) -> Self {
-        SessReq {req_type: req_type, addr: client_addr }
+    pub fn new(req_type: ReqType, req_id: u64, client_addr: IpAddr) -> Self {
+        SessReq {req_type: req_type, req_id: req_id, addr: client_addr }
     }
 
     pub fn from_msg(msg: &[u8]) -> Result<SessReq, AccessError> {

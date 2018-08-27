@@ -11,6 +11,7 @@ pub enum SessReqAction {
     DenyRenewTooSoon,
     DenyMaxRenewalsReached,
     DenyRenewAlreadyInProgress,
+    DenyDuplicateRequest,
 }
 
 impl fmt::Display for SessReqAction {
@@ -21,6 +22,7 @@ impl fmt::Display for SessReqAction {
             SessReqAction::DenyRenewTooSoon => write!(f, "request received before renewal window"),
             SessReqAction::DenyMaxRenewalsReached => write!(f, "max session renewals reached"),
             SessReqAction::DenyRenewAlreadyInProgress => write!(f, "renewal already requested"),
+            SessReqAction::DenyDuplicateRequest => write!(f, "request is a duplicate"),
         }
     }
 }
@@ -28,6 +30,7 @@ impl fmt::Display for SessReqAction {
 #[derive(Serialize, Deserialize)]
 pub struct SessResp {
     pub action: SessReqAction,
+    pub req_id: u64,
     duration: u64,
     renewals_remaining: u8,
 }
@@ -51,8 +54,9 @@ impl fmt::Display for SessResp {
 }
 
 impl SessResp {
-    pub fn new(action: SessReqAction, duration: u64, renewals_remaining: u8) -> Self {
-        SessResp { action: action, duration: duration, renewals_remaining: renewals_remaining }
+    pub fn new(action: SessReqAction, req_id: u64, duration: u64, renewals_remaining: u8) -> Self {
+        SessResp { action: action, req_id: req_id,
+                   duration: duration, renewals_remaining: renewals_remaining }
     }
 
     pub fn from_msg(msg: &[u8]) -> Result<SessResp, AccessError> {

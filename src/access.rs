@@ -15,10 +15,12 @@ use access::err::AccessError;
 use access::keys::KeyData;
 use access::packet;
 use access::state::State;
-use clap::App;
+use clap::{App, Arg};
 use futures::{Future, Sink, Stream};
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Timeout};
+
+const VERSION: &'static str = "2.0.0";
 
 struct ClientCodec {
     state: State,
@@ -52,10 +54,11 @@ impl UdpCodec for ClientCodec {
     }
 
     fn encode(&mut self, (remote_addr, client_addr): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        self.state.cur_req_id += 1;
         self.state.local_nonce.increment_le_inplace();
         into.extend(&self.state.local_nonce[..]);
 
-        match SessReq::new(ReqType::TimedAccess, client_addr).to_msg() {
+        match SessReq::new(ReqType::TimedAccess, self.state.cur_req_id, client_addr).to_msg() {
             Ok(msg) => {
                 let encrypted_req_packet = packet::create(&msg, &mut self.state,
                                                               &self.key_data);
@@ -129,28 +132,35 @@ fn run(state_filename: &str, key_data_filename: &str, remote_str: &str,
 
 fn main() {
     let default_state_filename = format!("{}/.access/state.yaml",
-                                         std::env::home_dir().unwrap().display());
+                                         std::env::home_dir().unwrap().display() );
     let default_key_data_filename = format!("{}/.access/keydata.yaml",
                                          std::env::home_dir().unwrap().display());
     let matches = App::new("access")
-                          .version("1.0.1")
+                          .version(VERSION)
                           .author("Chuck Musser <cmusser@sonic.net>")
                           .about("Sends access request to host")
-                          .args_from_usage(
-                              "-a, --addr=[address] 'Specify the client address'
-                               -s, --state-file=[filename] 'state file'
-                               -k, --key-data-file=[filename] 'key file'
-                               -4, --prefer-ipv4 'Prefer IPv4 address'
-                              <HOST>              'remote host to access'").get_matches();
+                          .arg(Arg::with_name("address").empty_values(false)
+                             .short("a").long("addr").default_value("0.0.0.0")
+                             .help("Specify the client address"))
+                          .arg(Arg::with_name("state-file").empty_values(false)
+                             .short("s").long("state-file").default_value(&default_state_filename)
+                             .help("Path to state file"))
+                          .arg(Arg::with_name("key-data-file").empty_values(false)
+                             .short("k").long("key-data-file").default_value(&default_key_data_filename)
+                             .help("Path to key data file"))
+                          .arg(Arg::with_name("prefer-ipv4")
+                             .short("4").long("prefer-ipv4")
+                             .help("Prefer IPv4 address"))
+                          .arg(Arg::with_name("HOST")
+                             .required(true)
+                             .help("Remote host to access"))
+                             .get_matches();
 
-    let remote_str = matches.value_of("HOST").unwrap();
-    let prefer_ipv4 = matches.is_present("prefer-ipv4");
-    let client_addr_str = matches.value_of("addr").unwrap_or("0.0.0.0");
-    let state_filename = matches.value_of("state-file").unwrap_or(&default_state_filename);
-    let key_data_filename = matches.value_of("key-data-file").unwrap_or(&default_key_data_filename);
-
-    if let Err(e) = run(state_filename, key_data_filename, remote_str, prefer_ipv4,
-                        client_addr_str) {
+    if let Err(e) = run(matches.value_of("state-file").unwrap(),
+                        matches.value_of("key-data-file").unwrap(),
+                        matches.value_of("HOST").unwrap(),
+                        matches.is_present("prefer-ipv4"),
+                        matches.value_of("address").unwrap()) {
         println!("failed: {}", e);
     }
 }

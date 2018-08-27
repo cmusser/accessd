@@ -16,6 +16,7 @@ use sodiumoxide::crypto::box_::{Nonce, NONCEBYTES};
 pub struct State {
     #[serde(default, skip)]
     path: PathBuf,
+    pub cur_req_id: u64,
     #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
     pub local_nonce: Nonce,
     #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "nonce_from_hex")]
@@ -31,7 +32,8 @@ impl State {
                 println!("couldn't open {} ({}), so resetting nonces",
                          path.display(), why.description());
                 let initial: [u8; NONCEBYTES] = [0; NONCEBYTES];
-                Ok(State { path: path, local_nonce: Nonce::from_slice(&initial).unwrap(),
+                Ok(State { path: path, cur_req_id: 0,
+                           local_nonce: Nonce::from_slice(&initial).unwrap(),
                            remote_nonce: Nonce::from_slice(&initial).unwrap()})
             },
 

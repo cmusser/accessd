@@ -23,7 +23,7 @@ use access::packet;
 use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
-use clap::App;
+use clap::{App, Arg};
 use daemonize::Daemonize;
 use futures::{future, Future, Stream};
 use tokio_core::net::{UdpSocket, UdpCodec};
@@ -31,6 +31,10 @@ use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
 
 const MAX_RENEWALS: u8 = 4;
+const VERSION: &'static str = "2.0.0";
+const DEFAULT_DURATION: &'static str = "900";
+const DEFAULT_STATE_FILENAME: &'static str = "/var/db/accessd_state.yaml";
+const DEFAULT_KEYDATA_FILENAME: &'static str = "/etc/accessd_keydata.yaml";
 
 enum TimeoutCompleteAction {
     Revoke,
@@ -54,14 +58,15 @@ impl SessionInterval {
 
 pub struct Session {
     cmd: String,
+    req_id: u64,
     duration: u64,
     req_addr: String,
     handle: Handle,
 }
 
 impl Session {
-    fn new (cmd: &String, duration: u64, req_addr: IpAddr, handle: &Handle) -> Self {
-        Session {cmd: cmd.clone(), duration: duration,
+    fn new (cmd: &String, req_id: u64, duration: u64, req_addr: IpAddr, handle: &Handle) -> Self {
+        Session {cmd: cmd.clone(), req_id: req_id, duration: duration,
                     req_addr: req_addr.to_string(), handle: handle.clone() }
     }
 }
@@ -100,7 +105,8 @@ impl UdpCodec for ServerCodec {
                     Ok(recv_req) => {
                         let client_ip =
                             if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };
-                        Ok(Session::new(&self.cmd, self.duration, client_ip, &self.handle))
+                        Ok(Session::new(&self.cmd, recv_req.req_id, self.duration,
+                                        client_ip, &self.handle))
                     },
                     Err(e) => Err(e),
                 }
@@ -110,16 +116,16 @@ impl UdpCodec for ServerCodec {
         Ok((*addr, sess_result, self.sessions.clone()))
     }
 
-    fn encode(&mut self, (addr, sess, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        match sess {
-            Ok(sess) => {
-                let resp = match handle_incoming(&sessions, &sess) {
+    fn encode(&mut self, (addr, req_sess, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        match req_sess {
+            Ok(req_sess) => {
+                let resp = match handle_incoming(&sessions, &req_sess, &mut self.state) {
                     grant @ SessResp {action: SessReqAction::Grant, ..} => {
-                        grant_access(sess, sessions);
+                        grant_access(req_sess, sessions);
                         grant
                     },
                     renew @ SessResp {action: SessReqAction::Renew, ..} => {
-                        renew_access(sess, sessions);
+                        renew_access(req_sess, sessions);
                         renew
                     },
                     deny =>  deny,
@@ -145,29 +151,34 @@ impl UdpCodec for ServerCodec {
     }
 }
 
-fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, sess: &Session) -> SessResp {
-    let client_addr = sess.req_addr.clone();
+fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, req_sess: &Session, state: &mut State) -> SessResp {
+
+    if state.cur_req_id >= req_sess.req_id {
+        return SessResp::new(SessReqAction::DenyDuplicateRequest, req_sess.req_id, 0, 0)
+    }
+
+    let client_addr = req_sess.req_addr.clone();
     let mut sessions_mut = sessions.borrow_mut();
     let sess_interval = sessions_mut.entry(client_addr);
     match sess_interval {
         Occupied(mut entry) => {
             let sess_interval_mut = entry.get_mut();
             let elapsed = sess_interval_mut.timeout_start.elapsed().as_secs();
-            let renew_ok_after = ((sess.duration as f64) * 0.75) as u64;
+            let renew_ok_after = ((req_sess.duration as f64) * 0.75) as u64;
             if elapsed < renew_ok_after {
-                SessResp::new(SessReqAction::DenyRenewTooSoon, renew_ok_after - elapsed , 0)
+                SessResp::new(SessReqAction::DenyRenewTooSoon, req_sess.req_id, renew_ok_after - elapsed , 0)
             } else if sess_interval_mut.renewals >= MAX_RENEWALS {
-                SessResp::new(SessReqAction::DenyMaxRenewalsReached, 0, 0)
+                SessResp::new(SessReqAction::DenyMaxRenewalsReached, req_sess.req_id, 0, 0)
             } else if !sess_interval_mut.renew_ok {
-                SessResp::new(SessReqAction::DenyRenewAlreadyInProgress, 0, 0)
+                SessResp::new(SessReqAction::DenyRenewAlreadyInProgress, req_sess.req_id, 0, 0)
             } else {
                 sess_interval_mut.timeout_start = Instant::now();
                 sess_interval_mut.renew_ok = false;
                 sess_interval_mut.renewals += 1;
-                SessResp::new(SessReqAction::Renew, sess.duration, MAX_RENEWALS - sess_interval_mut.renewals)
+                SessResp::new(SessReqAction::Renew, req_sess.req_id, req_sess.duration, MAX_RENEWALS - sess_interval_mut.renewals)
             }
         },
-        Vacant(_) => SessResp::new(SessReqAction::Grant, sess.duration, MAX_RENEWALS),
+        Vacant(_) => SessResp::new(SessReqAction::Grant, req_sess.req_id, req_sess.duration, MAX_RENEWALS),
     }
 }
 
@@ -197,64 +208,64 @@ fn  get_timeout_action(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, 
     }
 }
 
-fn grant_access(sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>) {
-    println!("new session for {}", sess.req_addr);
+fn grant_access(new_sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>) {
+    println!("new session for {}", new_sess.req_addr);
 
-    sess.handle.clone().spawn(
+    new_sess.handle.clone().spawn(
         // 1: Execute the "grant" command.
-        Command::new(&sess.cmd).arg("grant")
-            .arg(&sess.req_addr)
-            .output_async(&sess.handle).map(|output| {(output, sess, sessions)})
+        Command::new(&new_sess.cmd).arg("grant")
+            .arg(&new_sess.req_addr)
+            .output_async(&new_sess.handle).map(|output| {(output, new_sess, sessions)})
         // 2: Create a session for this client, and start a delay before the "revoke" command.
             .and_then(move |args| {
-                let (output, sess, sessions) = args;
-                create_session(&sessions, sess.req_addr.clone());
+                let (output, new_sess, sessions) = args;
+                create_session(&sessions, new_sess.req_addr.clone());
                 print!("start command:\n{}", str::from_utf8(&output.stdout).unwrap());
-                Timeout::new(Duration::from_secs(sess.duration), &sess.handle)
-                    .unwrap().map(|_| { (sess, sessions) })
+                Timeout::new(Duration::from_secs(new_sess.duration), &new_sess.handle)
+                    .unwrap().map(|_| { (new_sess, sessions) })
             })
         // 3: Continue processing after the timeout.
             .then( |args| {
-                let (sess, sessions) = args.unwrap();
-                manage_session(sess, sessions)
+                let (new_sess, sessions) = args.unwrap();
+                manage_session(new_sess, sessions)
             })
     );
 }
 
-fn renew_access(sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>) {
-    println!("renew session for {}", sess.req_addr);
+fn renew_access(existing_sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>) {
+    println!("renew session for {}", existing_sess.req_addr);
 
-    sess.handle.clone().spawn(
+    existing_sess.handle.clone().spawn(
         // 1: start a delay before executing "revoke" command
-        Timeout::new(Duration::from_secs(sess.duration), &sess.handle)
-            .unwrap().map(|_| { (sess, sessions) })
+        Timeout::new(Duration::from_secs(existing_sess.duration), &existing_sess.handle)
+            .unwrap().map(|_| { (existing_sess, sessions) })
         // 2: Continue processing after the timeout.
             .then( |args| {
-                let (sess, sessions) = args.unwrap();
-                manage_session(sess, sessions)
+                let (existing_sess, sessions) = args.unwrap();
+                manage_session(existing_sess, sessions)
             })
     );
 }
 
-fn manage_session(sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>)
+fn manage_session(active_sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInterval>>>)
                   -> futures::future::FutureResult<(), ()> {
 
-    match get_timeout_action(&sessions, &sess) {
+    match get_timeout_action(&sessions, &active_sess) {
         TimeoutCompleteAction::Revoke => {
-            sess.handle.clone().spawn(
-                Command::new(&sess.cmd).arg("revoke")
-                    .arg(&sess.req_addr)
-                    .output_async(&sess.handle).map(|output| {(output, sess, sessions)})
+            active_sess.handle.clone().spawn(
+                Command::new(&active_sess.cmd).arg("revoke")
+                    .arg(&active_sess.req_addr)
+                    .output_async(&active_sess.handle).map(|output| {(output, active_sess, sessions)})
                     .then(move |args| {
-                        let (output, sess, sessions) = args.unwrap();
+                        let (output, active_sess, sessions) = args.unwrap();
                         {
                             let mut sessions_mut = sessions.borrow_mut();
                             {
-                                let sess_interval_mut = sessions_mut.get_mut(&sess.req_addr).unwrap();
-                                println!("removing {} after {} seconds ", sess.req_addr,
+                                let sess_interval_mut = sessions_mut.get_mut(&active_sess.req_addr).unwrap();
+                                println!("removing {} after {} seconds ", active_sess.req_addr,
                                          sess_interval_mut.session_start.elapsed().as_secs());
                             }
-                            sessions_mut.remove(&sess.req_addr);
+                            sessions_mut.remove(&active_sess.req_addr);
                         }
 
                         print!("stop command:\n{}", str::from_utf8(&output.stdout).unwrap());
@@ -266,7 +277,7 @@ fn manage_session(sess: Session, sessions: Rc<RefCell<HashMap<String, SessionInt
             future::ok(())
         },
         TimeoutCompleteAction::Unknown => {
-            println!("{} unknown", sess.req_addr);
+            println!("{} unknown", active_sess.req_addr);
             future::ok(())
         }
     }
@@ -294,23 +305,27 @@ fn run(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration
 
 fn main() {
 
-    let default_state_filename = "/var/db/accessd_state.yaml";
-    let default_keydata_filename = "/etc/accessd_keydata.yaml";
     let matches = App::new("accessd")
-        .version("1.0.1")
+        .version(VERSION)
         .author("Chuck Musser <cmusser@sonic.net>")
         .about("Grant access to host")
-        .args_from_usage(
-            "-d, --duration=[seconds] 'duration of access period (default: 900)'
-             -s, --state-file=[filename] 'state file'
-             -k, --key-data-file=[filename] 'key file'
-             -f, --foreground 'run in foreground'
-             <CMD>              'command to grant/revoke access'").get_matches();
+        .arg(Arg::with_name("duration").empty_values(false)
+             .short("d").long("durationr").default_value(DEFAULT_DURATION)
+             .help("Specify the client address"))
+        .arg(Arg::with_name("state-file").empty_values(false)
+             .short("s").long("state-file").default_value(DEFAULT_STATE_FILENAME)
+             .help("Path to state file"))
+        .arg(Arg::with_name("key-data-file").empty_values(false)
+             .short("k").long("key-data-file").default_value(DEFAULT_KEYDATA_FILENAME)
+             .help("Path to key data file"))
+        .arg(Arg::with_name("prefer-ipv4")
+             .short("f").long("foreground")
+             .help("Run in foreground"))
+        .arg(Arg::with_name("CMD")
+             .required(true)
+             .help("Command to grant/revoke access"))
+        .get_matches();
 
-    let access_cmd = matches.value_of("CMD").unwrap();
-    let duration = matches.value_of("duration").unwrap_or("900").parse::<u64>().unwrap();
-    let state_filename = matches.value_of("state-file").unwrap_or(default_state_filename);
-    let key_data_filename = matches.value_of("key-data-file").unwrap_or(default_keydata_filename);
     if ! matches.is_present("foreground") {
         let stdout = File::create("/var/log/accessd.out").unwrap();
         let stderr = File::create("/var/log/accessd.err").unwrap();
@@ -324,7 +339,10 @@ fn main() {
         }
     }
 
-    if let Err(e) = run(state_filename, key_data_filename, access_cmd, duration) {
+    if let Err(e) = run(matches.value_of("state-file").unwrap(),
+                        matches.value_of("key-data-file").unwrap(),
+                        matches.value_of("CMD").unwrap(),
+                        matches.value_of("duration").unwrap().parse::<u64>().unwrap()) {
         println!("failed: {}", e);
     }
 }
