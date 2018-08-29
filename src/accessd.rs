@@ -19,7 +19,7 @@ use std::str;
 use std::time::{Duration, Instant};
 
 use access::keys::{KeyDataReader, ServerKeyData};
-use access::state::ClientState;
+use access::state::ServerState;
 use access::packet;
 use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
@@ -79,7 +79,7 @@ pub struct ServerCodec {
      duration: u64,
      handle: Handle,
      sessions: Rc<RefCell<HashMap<String,SessionInterval>>>,
-     state: ClientState,
+     state: ServerState,
      key_data: ServerKeyData,
 }
 
@@ -87,46 +87,49 @@ impl ServerCodec {
 
     fn new(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration: u64,
            handle: &Handle) -> Result<Self, AccessError> {
-        let state = ClientState::read(state_filename)?;
+        let state = ServerState::read(state_filename)?;
         let key_data = ServerKeyData::read(key_data_filename)?;
 
         Ok(ServerCodec {cmd: String::from(access_cmd),  duration: duration,
                      handle: handle.clone(), sessions: Rc::new(RefCell::new(HashMap::new())),
                      state: state, key_data: key_data})
     }
+
+    fn get_sess(&mut self, addr: &SocketAddr, buf: &[u8]) -> Option<(String,Session)> {
+        for (name, public_key) in &self.key_data.peer_public_keys {
+            match packet::open(buf, &self.key_data.secret, public_key) {
+                Ok(req_packet) => {
+                    match SessReq::from_msg(&req_packet) {
+                        Ok(recv_req) => {
+                            let client_ip =
+                                if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };
+                            return Some((name.clone(),Session::new(&self.cmd, recv_req.req_id, self.duration,
+                                                                  client_ip, &self.handle)));
+                        },
+                        Err(e) => println!("invalid message from {:?}: {}", addr, e),
+                    }
+                },
+                Err(_) => {}
+            }
+            println!("{}: {:?}", name, public_key);
+        }
+        None
+    }
 }
 
 impl UdpCodec for ServerCodec {
-    type In = (SocketAddr, Result<Session, AccessError>, Rc<RefCell<HashMap<String, SessionInterval>>>);
-    type Out = (SocketAddr, Result<Session, AccessError>, Rc<RefCell<HashMap<String, SessionInterval>>>);
+    type In = (SocketAddr, Option<(String,Session)>, Rc<RefCell<HashMap<String, SessionInterval>>>);
+    type Out = (SocketAddr, Option<(String,Session)>, Rc<RefCell<HashMap<String, SessionInterval>>>);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        for (name, public_key) in &self.key_data.peer_public_keys {
-            println!("{}: {:?}", name, public_key);
-        }
-        let sess_result = match packet::open(buf, &self.key_data.secret,
-                                             self.key_data.peer_public_keys.get("chuck").unwrap()) {
-            Ok(req_packet) => {
-                match SessReq::from_msg(&req_packet) {
-                    Ok(recv_req) => {
-                        let client_ip =
-                            if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };
-                        Ok(Session::new(&self.cmd, recv_req.req_id, self.duration,
-                                        client_ip, &self.handle))
-                    },
-                    Err(e) => Err(e),
-                }
-            },
-            Err(e) => Err(e)
-        };
-        Ok((*addr, sess_result, self.sessions.clone()))
+        Ok((*addr, self.get_sess(addr, buf), self.sessions.clone()))
     }
 
-    fn encode(&mut self, (addr, req_sess, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        match req_sess {
-            Ok(req_sess) => {
-                let resp = match handle_incoming(&sessions, &req_sess, &mut self.state) {
+    fn encode(&mut self, (addr, sess_info, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        match sess_info {
+            Some((name, req_sess)) => {
+                let resp = match handle_incoming(&sessions, name, &req_sess, &mut self.state) {
                     grant @ SessResp {action: SessReqAction::Grant, ..} => {
                         grant_access(req_sess, sessions);
                         grant
@@ -144,26 +147,34 @@ impl UdpCodec for ServerCodec {
                     Ok(msg) => {
                         let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data.secret,
                                                                   self.key_data.peer_public_keys.get("chuck").unwrap());
-                        if let Err(e) = self.state.write() {
-                            println!("state file write failed: {}", e)
-                        }
                         into.extend(encrypted_req_packet);
                     },
                     Err(e) => println!("packet encoding failed: {}", e),
                 }
             },
-            Err(e) => println!("invalid sess from {:?}: {}", addr, e),
+            None => println!("invalid request from {:?}", addr),
         }
         addr
     }
 }
 
-fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, req_sess: &Session, state: &mut ClientState) -> SessResp {
+fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, name: String, req_sess: &Session, state: &mut ServerState) -> SessResp {
 
-    if state.cur_req_id >= req_sess.req_id {
+    let cur_req_id = match state.cur_req_ids.get(&name) {
+        Some(req_id) => {
+            println!("session for {}, req_id {}", name, req_id);
+            *req_id
+        },
+        None => {
+            println!("no request ID for {}", name);
+            0
+        },
+    };
+
+    if cur_req_id >= req_sess.req_id {
         return SessResp::new(SessReqAction::DenyDuplicateRequest, req_sess.req_id, 0, 0)
     } else {
-        state.cur_req_id = req_sess.req_id;
+        state.cur_req_ids.insert(name, req_sess.req_id);
         if let Err(e) = state.write() {
             println!("state file write failed: {}", e)
         }
