@@ -12,9 +12,9 @@ use std::time::Duration;
 use access::req::{SessReq, REQ_PORT, ReqType};
 use access::resp::{SessResp};
 use access::err::AccessError;
-use access::keys::KeyData;
+use access::keys::{KeyDataReader, ClientKeyData};
 use access::packet;
-use access::state::State;
+use access::state::ClientState;
 use clap::{App, Arg};
 use futures::{Future, Sink, Stream};
 use sodiumoxide::crypto::box_::{Nonce, NONCEBYTES};
@@ -25,14 +25,14 @@ use tokio_core::reactor::{Core, Timeout};
 const VERSION: &'static str = "2.0.0";
 
 struct ClientCodec {
-    state: State,
-    key_data: KeyData,
+    state: ClientState,
+    key_data: ClientKeyData,
 }
 
 impl ClientCodec {
     fn new(state_filename: &str, key_data_filename: &str) -> Result<Self, AccessError> {
-        let state = State::read(state_filename)?;
-        let key_data = KeyData::read(key_data_filename)?;
+        let state = ClientState::read(state_filename)?;
+        let key_data = ClientKeyData::read(key_data_filename)?;
         Ok(ClientCodec {state: state, key_data: key_data })
     }
 }
@@ -43,7 +43,7 @@ impl UdpCodec for ClientCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        match packet::open(buf, &self.key_data) {
+        match packet::open(buf, &self.key_data.secret, &self.key_data.peer_public) {
             Ok(resp_packet) => {
                 match SessResp::from_msg(&resp_packet) {
                     Ok(recv_resp) => println!("{}: {}", addr, recv_resp),
@@ -62,7 +62,8 @@ impl UdpCodec for ClientCodec {
 
         match SessReq::new(ReqType::TimedAccess, self.state.cur_req_id, client_addr).to_msg() {
             Ok(msg) => {
-                let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data);
+                let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data.secret,
+                                                          &self.key_data.peer_public);
                 if let Err(e) = self.state.write() {
                     println!("state file write failed: {}", e)
                 }

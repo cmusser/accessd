@@ -18,8 +18,8 @@ use std::rc::Rc;
 use std::str;
 use std::time::{Duration, Instant};
 
-use access::keys::KeyData;
-use access::state::State;
+use access::keys::{KeyDataReader, ServerKeyData};
+use access::state::ClientState;
 use access::packet;
 use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
@@ -79,16 +79,16 @@ pub struct ServerCodec {
      duration: u64,
      handle: Handle,
      sessions: Rc<RefCell<HashMap<String,SessionInterval>>>,
-     state: State,
-     key_data: KeyData,
+     state: ClientState,
+     key_data: ServerKeyData,
 }
 
 impl ServerCodec {
 
     fn new(state_filename: &str, key_data_filename: &str, access_cmd: &str, duration: u64,
            handle: &Handle) -> Result<Self, AccessError> {
-        let state = State::read(state_filename)?;
-        let key_data = KeyData::read(key_data_filename)?;
+        let state = ClientState::read(state_filename)?;
+        let key_data = ServerKeyData::read(key_data_filename)?;
 
         Ok(ServerCodec {cmd: String::from(access_cmd),  duration: duration,
                      handle: handle.clone(), sessions: Rc::new(RefCell::new(HashMap::new())),
@@ -102,7 +102,11 @@ impl UdpCodec for ServerCodec {
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
 
-        let sess_result = match packet::open(buf, &self.key_data) {
+        for (name, public_key) in &self.key_data.peer_public_keys {
+            println!("{}: {:?}", name, public_key);
+        }
+        let sess_result = match packet::open(buf, &self.key_data.secret,
+                                             self.key_data.peer_public_keys.get("chuck").unwrap()) {
             Ok(req_packet) => {
                 match SessReq::from_msg(&req_packet) {
                     Ok(recv_req) => {
@@ -138,7 +142,8 @@ impl UdpCodec for ServerCodec {
                 into.extend(&nonce[..]);
                 match resp.to_msg() {
                     Ok(msg) => {
-                        let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data);
+                        let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data.secret,
+                                                                  self.key_data.peer_public_keys.get("chuck").unwrap());
                         if let Err(e) = self.state.write() {
                             println!("state file write failed: {}", e)
                         }
@@ -153,7 +158,7 @@ impl UdpCodec for ServerCodec {
     }
 }
 
-fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, req_sess: &Session, state: &mut State) -> SessResp {
+fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, req_sess: &Session, state: &mut ClientState) -> SessResp {
 
     if state.cur_req_id >= req_sess.req_id {
         return SessResp::new(SessReqAction::DenyDuplicateRequest, req_sess.req_id, 0, 0)
