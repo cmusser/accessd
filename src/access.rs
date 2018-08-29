@@ -14,7 +14,7 @@ use access::resp::{SessResp};
 use access::err::AccessError;
 use access::keys::{KeyDataReader, ClientKeyData};
 use access::packet;
-use access::state::ClientState;
+use access::state::{ClientState, StateManager};
 use clap::{App, Arg};
 use futures::{Future, Sink, Stream};
 use sodiumoxide::crypto::box_::{Nonce, NONCEBYTES};

@@ -19,7 +19,7 @@ use std::str;
 use std::time::{Duration, Instant};
 
 use access::keys::{KeyDataReader, ServerKeyData};
-use access::state::ServerState;
+use access::state::{ServerState, StateManager};
 use access::packet;
 use access::err::AccessError;
 use access::req::{SessReq, REQ_PORT};
