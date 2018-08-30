@@ -129,7 +129,7 @@ impl UdpCodec for ServerCodec {
     fn encode(&mut self, (addr, sess_info, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
         match sess_info {
             Some((name, req_sess)) => {
-                let resp = match handle_incoming(&sessions, name, &req_sess, &mut self.state) {
+                let resp = match handle_incoming(&sessions, name.clone(), &req_sess, &mut self.state) {
                     grant @ SessResp {action: SessReqAction::Grant, ..} => {
                         grant_access(req_sess, sessions);
                         grant
@@ -141,15 +141,21 @@ impl UdpCodec for ServerCodec {
                     deny =>  deny,
                 };
 
-                let nonce: Nonce = Nonce::from_slice(&randombytes(NONCEBYTES)).unwrap();
-                into.extend(&nonce[..]);
-                match resp.to_msg() {
-                    Ok(msg) => {
-                        let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data.secret,
-                                                                  self.key_data.peer_public_keys.get("chuck").unwrap());
-                        into.extend(encrypted_req_packet);
+                match self.key_data.peer_public_keys.get(&name) {
+                    Some(peer_public) => {
+                        let nonce: Nonce = Nonce::from_slice(&randombytes(NONCEBYTES)).unwrap();
+                        into.extend(&nonce[..]);
+                        match resp.to_msg() {
+                            Ok(msg) => {
+                                let encrypted_req_packet = packet::create(&msg, &nonce,
+                                                                          &self.key_data.secret,
+                                                                          peer_public);
+                                into.extend(encrypted_req_packet);
+                            },
+                            Err(e) => println!("packet encoding failed: {}", e),
+                        }
                     },
-                    Err(e) => println!("packet encoding failed: {}", e),
+                    None => println!("no public key found for {}", name),
                 }
             },
             None => println!("invalid request from {:?}", addr),
@@ -158,7 +164,8 @@ impl UdpCodec for ServerCodec {
     }
 }
 
-fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, name: String, req_sess: &Session, state: &mut ServerState) -> SessResp {
+fn handle_incoming(sessions: &Rc<RefCell<HashMap<String,SessionInterval>>>, name: String,
+                   req_sess: &Session, state: &mut ServerState) -> SessResp {
 
     let cur_req_id = match state.cur_req_ids.get(&name) {
         Some(req_id) => {
