@@ -33,7 +33,7 @@ matrix:
 
 before_install:
   - set -e
-  - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get update && sudo apt-get install libsodium-dev; else brew install libsodium; fi
+  - if [ $TRAVIS_OS_NAME = linux ]; then sudo sh install-libsodium-trusty.sh; else brew install libsodium; fi
   - rustup self update
 
 install:
