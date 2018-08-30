@@ -4,7 +4,69 @@ Host access system/Rust testbed
 
 ## Introduction
 
-`accessd` allows clients to send a request to temporarily grant access to a system. The server manages the access by running a script that, in most cases, reconfigures the firewall. It then waits for a period of time, then runs the script again to unconfigure the firewall exception created earlier. Delegating the access details to a script enables multi-platform support and also site-specific policies about the nature of the granted access. A script compatible with the BSD `ipfw(2)` command that grants SSH access is included, but scripts for other systems (Linux iptables and `pf`) should be easy to create. For security, NaCl's authenticated encryption scheme is used to protect the packets. This means that requests are only accepted from entities for whom the server has a public key and the actual contents of the request are shrouded from view. Nonces are used so that captured packets may not be resent later and succeed in opening the firewall or spoofing a response.
+`accessd` allows clients to send a request for temporarily access to a system. The server manages the access by running a script to reconfigure the firewall. It then waits for a period of time, then runs the script again to unconfigure the firewall exception created earlier. The details of how to grant access are delegated to the script, which means many platform can be supported. A script that grants SSH access through via BSD `ipfw(2)` is included. Scripts can be easily written for other systems as well. For security, NaCl's authenticated encryption scheme is used to provide confidentiality, integrity and authentication. Only requests from entities for whom the server has a public key are accepted. the actual contents of the request are shrouded from view. Replay protection is provided by a ever increasing sequence IDs contained in the packet payload, which the server will verify is always greater than one seen before.
+
+## Programs
+
+The system has four components:
+
+1. `accessd`: the server, which manages access
+2. a firewall configuration script.
+3. `access`: the client, which requests access
+4. `access-keygen`: a program to generate public private keypairs
+
+## Usage
+
+1. On the server, un `access-keygen` to generate a keypair. The output file looks like:
+  ```
+  secret: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+public: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+  ```
+
+2. Put the secret key in `/etc/accessd_keydata.yaml`. The file should be owned by root and contain the following at this point:
+
+  ```
+  secret: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  ```
+
+3. Change the permissions of the file:
+```
+chmod 600 /etc/accessd_keydata.yaml
+```
+
+4. Give the public key to trusted users who you want to be able to access your system.
+
+	5. Users should run `access-keygen`. Take the secret key from the generated file and create a file in `~/.access/keydata.yaml` that contains the secret key and the public key from the server. It should look like this:
+```
+secret: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+peer_public: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+```
+
+3. Change the permissions of the file:
+```
+chmod 600 ~/.access/keydata.yaml
+```
+
+Note that the replay protection relies on an ever-increasing request ID that the server associates with each public key. User who have multiple client hosts should generate a separate key for each one. If the client keys are shared, and you make a series of requests from client host 1, and then start making them from client host 2, the replay protection will reject requests until the request IDs on host 2 "catch up". Avoid this situation by creating a separate key for each host.
+
+4. On the server, add the public keys of users to the `/etc/accessd_keydata.yaml` file. A file with two users will look like this:
+```
+secret: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+peer_public_keys:
+  bob: DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+  joe: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+```
+
+5. Start the server:
+```
+/usr/local/sbin/accessd  /usr/local/sbin//ipfw-ssh.sh
+```
+
+6. On a client:
+  ```
+  access secured-host.com 
+  ```
+  By default, this will grant access to the source address of the request packet. If you want to specify the address, use the `-a` flag to do so. If you don't want to specify the address, but want to make sure that the system chooses an IPv4 address, use the `-4` flag.
 
 ## Motivation
 
@@ -12,44 +74,11 @@ The main goal was to utilize the Tokio framework, which uses the notion of "futu
 
 As a whirlwind tour of Rust, `accessd` covered a fair amount of ground. Specifically:
 
-- Tokio streams: allows handling an endless sequence of events, in this case a stream of UDP.
+- Tokio streams: allows handling an endless sequence of events, in this case the exchange of UDP packet between client and server.
 - Tokio process: allows operating system processes to be spawned asynchronously and their output and exit status captured.
-- The Nom parser: used here to decode the incoming access request messages
+- Combinators, which allow a series of events to be chained together elegantly while keeping the system entirely asynchronous. The "process packet, open firewall, wait a while, close firewall" sequence is made possible via combinators.
+- Serde, which is used to handle the persistent key and state data for the client and server programs, using YAML. It also is used to encode and decode the request messages, using CBOR. Early versions used the Nom parser, which is a novel and interesting library.
 - The Clap command line argument processor: provides a convenient command-line utility.
-- THe sodiumoxide Rust bindings to libsodium (the widely used implementation of the NaCl security suite).
-- Various bread-and-butter Rust constructs: structs (with both `impl` and `impl` of traits), enums, match statements, if-let. 
+- The sodiumoxide Rust bindings to libsodium (the widely used implementation of the NaCl security suite).
+- Various bread-and-butter Rust constructs: structs,  traits, enums, match statements, if-let. 
 - Shared mutable state, using a `HashMap` and the `Rc`/`RefCell` wrapping technique to make it available safely.
-
-## Usage
-
-The system has four components
-
-- `accessd`: the server, which manages access
-- a firewall configuration script. One compatible with the FreeBSD `ipfw(2)` system is provided. 
-- `access`: the client, which requests access
-- `access-keygen`: a program to generate public private keypairs
-
-To use:
-
-1. run `access-keygen` twice (for the server and the client) to generate keypairs for the two peers.
-  ```
-  cargo run --bin access-keygen -- access
-  cargo run --bin access-keygen -- accessd
-  ```
-  These commands create keypair files named `access_keypair.yaml` and `accessd_keypair.yaml`.
-
-2. Create key data files for the peers. For the client, copy the `access_keypair.yaml` file to `access_keydata.yaml`, change the `public` field name to `peer_public` and replace the data for that field by pasting in the `public` value from `accessd_keypair.yaml`. For the server, repeat this procedure with the `accessd_keypair.yaml`, copying it to `access_keydata.yaml`, renaming `public` to `peer_public` and pasting in the public value from `access_keypair.yaml`. *Note: yes this is clunky. There should be a utility program to facilitate the "key exchange" process.*
-
-3. On the server machine, run `accessd`:
-  ```
-  sudo sh -c 'cargo run --bin accessd $(pwd)/ipfw-ssh.sh > accessd.out &'
-  ```
-  This will grant access for 15 minutes. This default can be changed with the `-d <seconds>` argument. Note that the firewall management script provided is for the `ipfw(2)` firewall system used by {Free,DragonFly}, and opens up access to port 22 (SSH). You'll have to write your own script for other firewall systems (iptables, `pf(4)`, NPF, etc). The script is invoked with two arguments. The first is the word `grant` or `revoke` and the second is the IP address to which the request is to apply.
-  
-4. On the client, you can request access to the server with a command like this:
-  ```
-  cargo run --bin access -- 1.2.3.4
-  ```
-  By default, this will grant access to the IP address used as the source address for the request packet, which will be chosen by the OS. If you want to specify the address, use the `-a` flag to do so. If you don't want to specify the address, but want to make sure that the system chooses an IPv4 address, use the `-4` flag. Dual-stack support in `accessd` is not quite right yet, which is why the `-4` flag exists in the client for now.
-  
-The commands don't need to be run using Cargo, of course. Just copy them out of the source directory's `target/{debug,release}` directory to a convenient place, like `/usr/local/bin`.
