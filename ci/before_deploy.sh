@@ -17,7 +17,9 @@ main() {
 
     test -f Cargo.lock || cargo generate-lockfile
 
-    cross rustc --target $TARGET --release -- -C lto
+    cross rustc --bin access --target $TARGET --release -- -C lto
+    cross rustc --bin accessd --target $TARGET --release -- -C lto
+    cross rustc --bin access-keygen --target $TARGET --release -- -C lto
 
     cp target/$TARGET/release/access $stage/
     cp target/$TARGET/release/accessd $stage/
