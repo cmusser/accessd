@@ -21,15 +21,15 @@ matrix:
     - env: TARGET=x86_64-unknown-linux-musl DISABLE_TESTS=1
 
     # OSX
-    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
-      os: osx
+#    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
+#      os: osx
 
     # Testing other channels
     - env: TARGET=x86_64-unknown-linux-gnu DISABLE_TESTS=1
       rust: nightly
-    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
-      os: osx
-      rust: nightly
+#    - env: TARGET=x86_64-apple-darwin DISABLE_TESTS=1
+#      os: osx
+#      rust: nightly
 
 before_install:
   - set -e
