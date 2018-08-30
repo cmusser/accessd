@@ -1,6 +1,8 @@
 # accessd
 
-Host access system/Rust testbed
+Secure and temporary access to hosts
+
+CI: [![Build Status](https://travis-ci.org/cmusser/accessd.svg?branch=master)](https://travis-ci.org/cmusser/accessd)
 
 ## Introduction
 
@@ -36,20 +38,20 @@ chmod 600 /etc/accessd_keydata.yaml
 
 4. Give the public key to trusted users who you want to be able to access your system.
 
-	5. Users should run `access-keygen`. Take the secret key from the generated file and create a file in `~/.access/keydata.yaml` that contains the secret key and the public key from the server. It should look like this:
+5. Users should run `access-keygen`. Take the secret key from the generated file and create a file in `~/.access/keydata.yaml` that contains the secret key and the public key from the server. It should look like this:
 ```
 secret: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 peer_public: CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 ```
 
-3. Change the permissions of the file:
+6. Change the permissions of the file:
 ```
 chmod 600 ~/.access/keydata.yaml
 ```
 
 Note that the replay protection relies on an ever-increasing request ID that the server associates with each public key. User who have multiple client hosts should generate a separate key for each one. If the client keys are shared, and you make a series of requests from client host 1, and then start making them from client host 2, the replay protection will reject requests until the request IDs on host 2 "catch up". Avoid this situation by creating a separate key for each host.
 
-4. On the server, add the public keys of users to the `/etc/accessd_keydata.yaml` file. A file with two users will look like this:
+7. On the server, add the public keys of users to the `/etc/accessd_keydata.yaml` file. A file with two users will look like this:
 ```
 secret: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 peer_public_keys:
@@ -57,12 +59,12 @@ peer_public_keys:
   joe: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 ```
 
-5. Start the server:
+8. Start the server:
 ```
 /usr/local/sbin/accessd  /usr/local/sbin//ipfw-ssh.sh
 ```
 
-6. On a client:
+9. On a client:
   ```
   access secured-host.com 
   ```
