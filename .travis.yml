@@ -9,6 +9,7 @@ sudo: required
 env:
   global:
     - CRATE_NAME=accessd
+    - PKG_CONFIG_ALLOW_CROSS=1
 
 matrix:
   # TODO These are all the build jobs. Adjust as necessary. Comment out what you
@@ -32,6 +33,7 @@ matrix:
 
 before_install:
   - set -e
+  - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get install libsodium-dev; else brew install libsodium; fi
   - rustup self update
 
 install:
