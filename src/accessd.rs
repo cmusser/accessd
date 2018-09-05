@@ -39,6 +39,10 @@ const DEFAULT_DURATION: &'static str = "900";
 const DEFAULT_STATE_FILENAME: &'static str = "/var/db/accessd_state.yaml";
 const DEFAULT_KEYDATA_FILENAME: &'static str = "/etc/accessd_keydata.yaml";
 
+const DEFAULT_DAEMON_STDOUT_FILENAME: &'static str = "/var/log/accessd.out";
+const DEFAULT_DAEMON_STDERR_FILENAME: &'static str = "/var/log/accessd.err";
+
+
 enum TimeoutCompleteAction {
     Revoke,
     Renew,
@@ -356,23 +360,41 @@ fn main() {
              .help("Command to grant/revoke access"))
         .get_matches();
 
-    if ! matches.is_present("foreground") {
-        let stdout = File::create("/var/log/accessd.out").unwrap();
-        let stderr = File::create("/var/log/accessd.err").unwrap();
-        let daemonize = Daemonize::new()
-            .pid_file("/var/run/accessd.pid")
-            .stdout(stdout)
-            .stderr(stderr);
-        match daemonize.start() {
-            Ok(_) => println!("accessd starting"),
-            Err(e) => eprintln!("Error: {}", e),
+    if matches.is_present("foreground") {
+        if let Err(e) = run(matches.value_of("state-file").unwrap(),
+                            matches.value_of("key-data-file").unwrap(),
+                            matches.value_of("CMD").unwrap(),
+                            matches.value_of("duration").unwrap().parse::<u64>().unwrap()) {
+            println!("failed: {}", e);
         }
-    }
-
-    if let Err(e) = run(matches.value_of("state-file").unwrap(),
-                        matches.value_of("key-data-file").unwrap(),
-                        matches.value_of("CMD").unwrap(),
-                        matches.value_of("duration").unwrap().parse::<u64>().unwrap()) {
-        println!("failed: {}", e);
+    } else {
+        match File::create(DEFAULT_DAEMON_STDOUT_FILENAME) {
+            Ok(stdout) => {
+                match File::create(DEFAULT_DAEMON_STDERR_FILENAME) {
+                    Ok(stderr) => {
+                        let daemonize = Daemonize::new()
+                            .pid_file("/var/run/accessd.pid")
+                            .stdout(stdout)
+                            .stderr(stderr);
+                        match daemonize.start() {
+                            Ok(_) => {
+                                println!("accessd starting");
+                                if let Err(e) = run(matches.value_of("state-file").unwrap(),
+                                                    matches.value_of("key-data-file").unwrap(),
+                                                    matches.value_of("CMD").unwrap(),
+                                                    matches.value_of("duration").unwrap().parse::<u64>().unwrap()) {
+                                    println!("failed: {}", e);
+                                }
+                            },
+                            Err(e) => eprintln!("failed: couldn't daemonize -- {}", e),
+                        };
+                    },
+                    Err(e) => eprintln!("failed: couldn't open {} -- {}",
+                                        DEFAULT_DAEMON_STDERR_FILENAME, e),
+                }
+            },
+            Err(e) => eprintln!("failed: couldn't open {} -- {}",
+                                DEFAULT_DAEMON_STDOUT_FILENAME, e),
+        }
     }
 }
