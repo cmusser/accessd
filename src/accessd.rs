@@ -34,7 +34,7 @@ use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
 
 const MAX_RENEWALS: u8 = 4;
-const VERSION: &'static str = "2.0.0";
+const VERSION: &'static str = "2.0.1";
 const DEFAULT_DURATION: &'static str = "900";
 const DEFAULT_STATE_FILENAME: &'static str = "/var/db/accessd_state.yaml";
 const DEFAULT_KEYDATA_FILENAME: &'static str = "/etc/accessd_keydata.yaml";
