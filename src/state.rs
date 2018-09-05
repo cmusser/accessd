@@ -55,9 +55,14 @@ where Self: Serialize, Self: Sized, for<'de> Self: Deserialize<'de>
                     Err(why) => Err(AccessError::FileError(format!("couldn't read {}: {}",
                                                                  path.display(), why.description()))),
                     Ok(_) => {
-                        let mut state: Self = serde_yaml::from_str(&yaml).unwrap();
-                        state.set_path(path);
-                        Ok(state)
+                        match serde_yaml::from_str::<Self>(&yaml) {
+                            Ok(mut state) => {
+                                state.set_path(path);
+                                Ok(state)
+                            },
+                            Err(e) =>  Err(AccessError::FileError(format!("couldn't parse {}: {}",
+                                                                      path_str, e.description())))
+                        }
                     }
                 }
             },
