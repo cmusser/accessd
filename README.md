@@ -4,7 +4,7 @@ Secure and temporary access to hosts
 
 ## Introduction
 
-`accessd` allows clients to send a request for temporarily access to a system. The server manages the access by running a script to reconfigure the firewall. It then waits for a period of time, then runs the script again to unconfigure the firewall exception created earlier. The details of how to grant access are delegated to the script, which means many platform can be supported. A script that grants SSH access through via BSD `ipfw(2)` is included. Scripts can be easily written for other systems as well. For security, NaCl's authenticated encryption scheme is used to provide confidentiality, integrity and authentication. Only requests from entities for whom the server has a public key are accepted. the actual contents of the request are shrouded from view. Replay protection is provided by a ever increasing sequence IDs contained in the packet payload, which the server will verify is always greater than one seen before.
+`accessd` allows clients to send a request for temporary access to a system. The server manages the access by running a script to reconfigure the firewall. It then waits for a period of time, then runs the script again to unconfigure the firewall exception created earlier. The details of how to grant access are delegated to the script, which means many platform can be supported. A script that grants SSH access through via BSD `ipfw(2)` is included. Scripts can be easily written for other systems as well. For security, NaCl's authenticated encryption scheme is used to provide confidentiality, integrity and authentication. Only requests from entities for whom the server has a public key are accepted. the actual contents of the request are shrouded from view. Replay protection is provided by a ever increasing sequence IDs contained in the packet payload, which the server will verify is always greater than one seen before.
 
 ## Programs
 
@@ -70,7 +70,7 @@ peer_public_keys:
 
 ## Motivation
 
-This program was inspired by the `knockd` and `sshlockout` programs, which aim to increase security by limit access to the administrative interfacves of hosts.
+This program was inspired by the `knockd` and `sshlockout` programs, which aim to increase security by limiting access to the administrative interfacves of hosts.
 
 A major goal was to utilize the Tokio framework, which uses the notion of "futures" (known as "promises" in other languages) to create a server that handled requests asynchronously. It's entirely reasonable to write something like this in C, but lots of low-level details have to be managed (the event loop, a datastore for the shared state, command line handling, etc.).
 
