@@ -1,6 +1,6 @@
 [package]
 name = "accessd"
-version = "2.0.1"
+version = "2.0.2"
 authors = ["cmusser@sonic.net"]
 
 [dependencies]

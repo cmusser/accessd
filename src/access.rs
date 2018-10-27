@@ -22,7 +22,7 @@ use sodiumoxide::randombytes::randombytes;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Timeout};
 
-const VERSION: &'static str = "2.0.1";
+const VERSION: &'static str = "2.0.2";
 
 struct ClientCodec {
     state: ClientState,
