@@ -115,7 +115,6 @@ impl ServerCodec {
                 },
                 Err(_) => {}
             }
-            println!("{}: {:?}", name, public_key);
         }
         None
     }
