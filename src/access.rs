@@ -10,7 +10,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
 
-use access::req::{SessReq, REQ_PORT, ReqType};
+use access::req::{SessReq, REQ_PORT, ReqData};
 use access::resp::{SessResp};
 use access::err::AccessError;
 use access::keys::{KeyDataReader, ClientKeyData};
@@ -23,7 +23,7 @@ use sodiumoxide::randombytes::randombytes;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Timeout};
 
-const VERSION: &'static str = "2.0.3";
+const VERSION: &'static str = "3.0.0";
 
 struct ClientCodec {
     state: ClientState,
@@ -61,7 +61,7 @@ impl UdpCodec for ClientCodec {
         let nonce: Nonce = Nonce::from_slice(&randombytes(NONCEBYTES)).unwrap();
         into.extend(&nonce[..]);
 
-        match SessReq::new(ReqType::TimedAccess, self.state.cur_req_id, client_addr).to_msg() {
+        match SessReq::new(self.state.cur_req_id, ReqData::TimedAccess(client_addr)).to_msg() {
             Ok(msg) => {
                 let encrypted_req_packet = packet::create(&msg, &nonce, &self.key_data.secret,
                                                           &self.key_data.peer_public);

@@ -22,7 +22,7 @@ use access::keys::{KeyDataReader, ServerKeyData};
 use access::state::{ServerState, StateManager};
 use access::packet;
 use access::err::AccessError;
-use access::req::{SessReq, REQ_PORT};
+use access::req::{ReqData, SessReq, REQ_PORT};
 use access::resp::{SessReqAction, SessResp};
 use clap::{App, Arg};
 use daemonize::Daemonize;
@@ -34,7 +34,7 @@ use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_process::CommandExt;
 
 const MAX_RENEWALS: u8 = 4;
-const VERSION: &'static str = "2.0.2";
+const VERSION: &'static str = "3.0.0";
 const DEFAULT_DURATION: &'static str = "900";
 const DEFAULT_STATE_FILENAME: &'static str = "/var/db/accessd_state.yaml";
 const DEFAULT_KEYDATA_FILENAME: &'static str = "/etc/accessd_keydata.yaml";
@@ -105,10 +105,13 @@ impl ServerCodec {
                 Ok(req_packet) => {
                     match SessReq::from_msg(&req_packet) {
                         Ok(recv_req) => {
-                            let client_ip =
-                                if recv_req.addr.is_unspecified() { addr.ip() } else { recv_req.addr };
-                            return Some((name.clone(),Session::new(&self.cmd, recv_req.req_id, self.duration,
-                                                                  client_ip, &self.handle)));
+                            match recv_req.req_data {
+                                ReqData::TimedAccess(ip_addr) => {
+                                    if ip_addr.is_unspecified() { addr.ip() } else { ip_addr };
+                                    return Some((name.clone(),Session::new(&self.cmd, recv_req.req_id, self.duration,
+                                                                           ip_addr, &self.handle)));
+                                },
+                            };
                         },
                         Err(e) => println!("invalid message from {:?}: {}", addr, e),
                     }

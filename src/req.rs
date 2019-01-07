@@ -9,28 +9,27 @@ pub const REQ_PORT: u16 = 7387;
 pub const TIMED_ACCESS: u8 = 1;
 
 #[derive(Serialize, Deserialize)]
-pub enum ReqType {
-    TimedAccess
+pub enum ReqData {
+    TimedAccess(IpAddr)
 }
 
-impl fmt::Display for ReqType {
+impl fmt::Display for ReqData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ReqType::TimedAccess => { write!(f, "timed access") }
+            ReqData::TimedAccess(ip_addr) => { write!(f, "timed access for {}", ip_addr) }
         }
     }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SessReq {
-    pub req_type: ReqType,
     pub req_id: u64,
-    pub addr: IpAddr,
+    pub req_data: ReqData,
 }
 
 impl SessReq {
-    pub fn new(req_type: ReqType, req_id: u64, client_addr: IpAddr) -> Self {
-        SessReq {req_type: req_type, req_id: req_id, addr: client_addr }
+    pub fn new(req_id: u64, req_data: ReqData, ) -> Self {
+        SessReq {req_id: req_id, req_data: req_data,  }
     }
 
     pub fn from_msg(msg: &[u8]) -> Result<SessReq, AccessError> {
@@ -44,6 +43,6 @@ impl SessReq {
 
 impl fmt::Display for SessReq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} for {}", self.req_type, self.addr)
+        write!(f, "{}", self.req_data)
     }
 }
