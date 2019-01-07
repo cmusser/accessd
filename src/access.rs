@@ -1,5 +1,6 @@
 extern crate access;
 extern crate clap;
+extern crate dirs;
 extern crate futures;
 extern crate sodiumoxide;
 extern crate tokio_core;
@@ -22,7 +23,7 @@ use sodiumoxide::randombytes::randombytes;
 use tokio_core::net::{UdpSocket, UdpCodec};
 use tokio_core::reactor::{Core, Timeout};
 
-const VERSION: &'static str = "2.0.2";
+const VERSION: &'static str = "2.0.3";
 
 struct ClientCodec {
     state: ClientState,
@@ -134,9 +135,9 @@ fn run(state_filename: &str, key_data_filename: &str, remote_str: &str,
 
 fn main() {
     let default_state_filename = format!("{}/.access/state.yaml",
-                                         std::env::home_dir().unwrap().display() );
+                                         dirs::home_dir().unwrap().display() );
     let default_key_data_filename = format!("{}/.access/keydata.yaml",
-                                         std::env::home_dir().unwrap().display());
+                                         dirs::home_dir().unwrap().display());
     let matches = App::new("access")
                           .version(VERSION)
                           .author("Chuck Musser <cmusser@sonic.net>")
