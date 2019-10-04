@@ -6,11 +6,11 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use ::as_hex::u8vec_as_hex;
-use ::err::AccessError;
+use as_hex::u8vec_as_hex;
 use data_encoding::base16;
-use serde::{Serializer, Deserialize, Deserializer};
-use sodiumoxide::crypto::box_::{SecretKey, PublicKey};
+use err::AccessError;
+use serde::{Deserialize, Deserializer, Serializer};
+use sodiumoxide::crypto::box_::{PublicKey, SecretKey};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
@@ -33,66 +33,88 @@ pub struct ClientKeyData {
 pub struct ServerKeyData {
     #[serde(serialize_with = "seckey_as_hex", deserialize_with = "seckey_from_hex")]
     pub secret: SecretKey,
-    #[serde(serialize_with = "ser_public_keys", deserialize_with = "de_public_keys")]
-    pub peer_public_keys: HashMap<String,PublicKey>,
+    #[serde(
+        serialize_with = "ser_public_keys",
+        deserialize_with = "de_public_keys"
+    )]
+    pub peer_public_keys: HashMap<String, PublicKey>,
 }
 
 pub trait KeyDataReader {
     type Item;
 
     fn read(path_str: &str) -> Result<Self::Item, AccessError>
-        where for<'de> <Self as KeyDataReader>::Item: Deserialize<'de>
+    where
+        for<'de> <Self as KeyDataReader>::Item: Deserialize<'de>,
     {
         let path = Path::new(&path_str);
 
         match File::open(&path) {
-            Err(why) => Err(AccessError::FileError(String::from(format!("couldn't open {} ({})",
-                                                                 path.display(),
-                                                                 why.description())))),
+            Err(why) => Err(AccessError::FileError(format!(
+                "couldn't open {} ({})",
+                path.display(),
+                why.description()
+            ))),
 
             Ok(mut file) => {
                 let mut yaml = String::new();
                 match file.read_to_string(&mut yaml) {
-                    Err(why) => Err(AccessError::FileError(format!("couldn't read {}: {}",
-                                                                 path.display(),why.description()))),
-                    Ok(_) => serde_yaml::from_str(&yaml).map_err(|e| { AccessError::SerializeError(e) }),
+                    Err(why) => Err(AccessError::FileError(format!(
+                        "couldn't read {}: {}",
+                        path.display(),
+                        why.description()
+                    ))),
+                    Ok(_) => serde_yaml::from_str(&yaml).map_err(AccessError::SerializeError),
                 }
-            },
+            }
         }
     }
 }
 
-
-impl KeyDataReader for ClientKeyData  { type Item = Self; }
-impl KeyDataReader for ServerKeyData { type Item = Self; }
+impl KeyDataReader for ClientKeyData {
+    type Item = Self;
+}
+impl KeyDataReader for ServerKeyData {
+    type Item = Self;
+}
 
 fn seckey_as_hex<S>(key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer
+where
+    S: Serializer,
 {
     serializer.serialize_str(&base16::encode(&key[..]))
 }
 
 fn pubkey_from_hex<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
-    where D: Deserializer<'de>
+where
+    D: Deserializer<'de>,
 {
     use serde::de::Error;
     String::deserialize(deserializer)
-        .and_then(|string| base16::decode(&string.as_bytes()).map_err(|err| Error::custom(err.to_string())))
+        .and_then(|string| {
+            base16::decode(&string.as_bytes()).map_err(|err| Error::custom(err.to_string()))
+        })
         .map(|bytes| PublicKey::from_slice(&bytes))
         .and_then(|opt| opt.ok_or_else(|| Error::custom("failed to deserialize public key")))
 }
 
 fn seckey_from_hex<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
-    where D: Deserializer<'de>
+where
+    D: Deserializer<'de>,
 {
     use serde::de::Error;
     String::deserialize(deserializer)
-        .and_then(|string| base16::decode(&string.as_bytes()).map_err(|err| Error::custom(err.to_string())))
+        .and_then(|string| {
+            base16::decode(&string.as_bytes()).map_err(|err| Error::custom(err.to_string()))
+        })
         .map(|bytes| SecretKey::from_slice(&bytes))
         .and_then(|opt| opt.ok_or_else(|| Error::custom("failed to deserialize public key")))
 }
 
-fn ser_public_keys<S>(peer_public: &HashMap<String, PublicKey>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_public_keys<S>(
+    peer_public: &HashMap<String, PublicKey>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
