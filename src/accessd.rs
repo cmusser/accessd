@@ -147,43 +147,66 @@ impl ServerCodec {
     }
 }
 
+/* TODO: the data passed around by the codec is baroque. In particular,
+   what's up with the tuple in the "session" Option?
+*/
+pub struct CodecReqState {
+    sock_addr: SocketAddr,
+    session: Option<(String, Session)>,
+    sessions: Rc<RefCell<HashMap<String, SessionInterval>>>,
+}
+
+impl CodecReqState {
+    fn new(
+        sock_addr: SocketAddr,
+        session: Option<(String, Session)>,
+        sessions: &Rc<RefCell<HashMap<String, SessionInterval>>>,
+    ) -> Self {
+        Self {
+            sock_addr,
+            session,
+            sessions: sessions.clone(),
+        }
+    }
+}
+
 impl UdpCodec for ServerCodec {
-    type In = (
-        SocketAddr,
-        Option<(String, Session)>,
-        Rc<RefCell<HashMap<String, SessionInterval>>>,
-    );
-    type Out = (
-        SocketAddr,
-        Option<(String, Session)>,
-        Rc<RefCell<HashMap<String, SessionInterval>>>,
-    );
+    type In = CodecReqState;
+    type Out = CodecReqState;
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        Ok((*addr, self.get_sess(addr, buf), self.sessions.clone()))
+        Ok(CodecReqState::new(
+            *addr,
+            self.get_sess(addr, buf),
+            &self.sessions,
+        ))
     }
 
-    fn encode(&mut self, (addr, sess_info, sessions): Self::Out, into: &mut Vec<u8>) -> SocketAddr {
-        match sess_info {
+    fn encode(&mut self, req_state: Self::Out, into: &mut Vec<u8>) -> SocketAddr {
+        match req_state.session {
             Some((name, req_sess)) => {
-                let resp =
-                    match handle_incoming(&sessions, name.clone(), &req_sess, &mut self.state) {
-                        grant @ SessResp {
-                            action: SessReqAction::Grant,
-                            ..
-                        } => {
-                            grant_access(req_sess, sessions);
-                            grant
-                        }
-                        renew @ SessResp {
-                            action: SessReqAction::Renew,
-                            ..
-                        } => {
-                            renew_access(req_sess, sessions);
-                            renew
-                        }
-                        deny => deny,
-                    };
+                let resp = match handle_incoming(
+                    &req_state.sessions,
+                    name.clone(),
+                    &req_sess,
+                    &mut self.state,
+                ) {
+                    grant @ SessResp {
+                        action: SessReqAction::Grant,
+                        ..
+                    } => {
+                        grant_access(req_sess, req_state.sessions);
+                        grant
+                    }
+                    renew @ SessResp {
+                        action: SessReqAction::Renew,
+                        ..
+                    } => {
+                        renew_access(req_sess, req_state.sessions);
+                        renew
+                    }
+                    deny => deny,
+                };
 
                 match self.key_data.peer_public_keys.get(&name) {
                     Some(peer_public) => {
@@ -205,9 +228,9 @@ impl UdpCodec for ServerCodec {
                     None => println!("no public key found for {}", name),
                 }
             }
-            None => println!("invalid request from {:?}", addr),
+            None => println!("invalid request from {:?}", req_state.sock_addr),
         }
-        addr
+        req_state.sock_addr
     }
 }
 
