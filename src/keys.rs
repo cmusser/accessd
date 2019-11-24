@@ -6,7 +6,6 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use as_hex::u8vec_as_hex;
 use data_encoding::base16;
 use err::AccessError;
 use serde::{Deserialize, Deserializer, Serializer};
@@ -15,7 +14,7 @@ use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
 pub struct Keypair {
-    #[serde(serialize_with = "seckey_as_hex", deserialize_with = "seckey_from_hex")]
+    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "seckey_from_hex")]
     pub secret: SecretKey,
     #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "pubkey_from_hex")]
     pub public: PublicKey,
@@ -23,7 +22,7 @@ pub struct Keypair {
 
 #[derive(Serialize, Deserialize)]
 pub struct ClientKeyData {
-    #[serde(serialize_with = "seckey_as_hex", deserialize_with = "seckey_from_hex")]
+    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "seckey_from_hex")]
     pub secret: SecretKey,
     #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "pubkey_from_hex")]
     pub peer_public: PublicKey,
@@ -31,7 +30,7 @@ pub struct ClientKeyData {
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerKeyData {
-    #[serde(serialize_with = "seckey_as_hex", deserialize_with = "seckey_from_hex")]
+    #[serde(serialize_with = "u8vec_as_hex", deserialize_with = "seckey_from_hex")]
     pub secret: SecretKey,
     #[serde(
         serialize_with = "ser_public_keys",
@@ -78,11 +77,12 @@ impl KeyDataReader for ServerKeyData {
     type Item = Self;
 }
 
-fn seckey_as_hex<S>(key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
+pub fn u8vec_as_hex<T, S>(data: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
+    T: AsRef<[u8]>,
     S: Serializer,
 {
-    serializer.serialize_str(&base16::encode(&key[..]))
+    serializer.serialize_str(&base16::encode(&data.as_ref()))
 }
 
 fn pubkey_from_hex<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>

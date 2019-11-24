@@ -191,13 +191,18 @@ fn main() {
         )
         .get_matches();
 
-    if let Err(e) = run(
-        matches.value_of("state-file").unwrap(),
-        matches.value_of("key-data-file").unwrap(),
-        matches.value_of("HOST").unwrap(),
-        matches.is_present("prefer-ipv4"),
-        matches.value_of("address").unwrap(),
-    ) {
-        println!("failed: {}", e);
+    match sodiumoxide::init() {
+        Ok(()) => {
+            if let Err(e) = run(
+                matches.value_of("state-file").unwrap(),
+                matches.value_of("key-data-file").unwrap(),
+                matches.value_of("HOST").unwrap(),
+                matches.is_present("prefer-ipv4"),
+                matches.value_of("address").unwrap(),
+            ) {
+                println!("failed: {}", e);
+            }
+        }
+        Err(()) => eprintln!("failed to init crypto library"),
     }
 }

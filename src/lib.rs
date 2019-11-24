@@ -7,7 +7,6 @@ extern crate serde_cbor;
 extern crate serde_yaml;
 extern crate sodiumoxide;
 
-pub mod as_hex;
 pub mod err;
 pub mod keys;
 pub mod packet;

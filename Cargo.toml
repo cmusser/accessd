@@ -14,7 +14,7 @@ serde = "1.0"
 serde_derive = "1.0.10"
 serde_cbor = "0.6.1"
 serde_yaml = "0.7.1"
-sodiumoxide = "0.0.15"
+sodiumoxide = "0.2.5"
 tokio-core = "0.1"
 tokio-process = "0.1.1"
 

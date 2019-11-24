@@ -495,55 +495,60 @@ fn main() {
         )
         .get_matches();
 
-    if matches.is_present("foreground") {
-        if let Err(e) = run(
-            matches.value_of("state-file").unwrap(),
-            matches.value_of("key-data-file").unwrap(),
-            matches.value_of("CMD").unwrap(),
-            matches
-                .value_of("duration")
-                .unwrap()
-                .parse::<u64>()
-                .unwrap(),
-        ) {
-            println!("failed: {}", e);
-        }
-    } else {
-        match File::create(DEFAULT_DAEMON_STDOUT_FILENAME) {
-            Ok(stdout) => match File::create(DEFAULT_DAEMON_STDERR_FILENAME) {
-                Ok(stderr) => {
-                    let daemonize = Daemonize::new()
-                        .pid_file("/var/run/accessd.pid")
-                        .stdout(stdout)
-                        .stderr(stderr);
-                    match daemonize.start() {
-                        Ok(_) => {
-                            println!("accessd starting");
-                            if let Err(e) = run(
-                                matches.value_of("state-file").unwrap(),
-                                matches.value_of("key-data-file").unwrap(),
-                                matches.value_of("CMD").unwrap(),
-                                matches
-                                    .value_of("duration")
-                                    .unwrap()
-                                    .parse::<u64>()
-                                    .unwrap(),
-                            ) {
-                                println!("failed: {}", e);
-                            }
-                        }
-                        Err(e) => eprintln!("failed: couldn't daemonize -- {}", e),
-                    };
+    match sodiumoxide::init() {
+        Ok(()) => {
+            if matches.is_present("foreground") {
+                if let Err(e) = run(
+                    matches.value_of("state-file").unwrap(),
+                    matches.value_of("key-data-file").unwrap(),
+                    matches.value_of("CMD").unwrap(),
+                    matches
+                        .value_of("duration")
+                        .unwrap()
+                        .parse::<u64>()
+                        .unwrap(),
+                ) {
+                    println!("failed: {}", e);
                 }
-                Err(e) => eprintln!(
-                    "failed: couldn't open {} -- {}",
-                    DEFAULT_DAEMON_STDERR_FILENAME, e
-                ),
-            },
-            Err(e) => eprintln!(
-                "failed: couldn't open {} -- {}",
-                DEFAULT_DAEMON_STDOUT_FILENAME, e
-            ),
+            } else {
+                match File::create(DEFAULT_DAEMON_STDOUT_FILENAME) {
+                    Ok(stdout) => match File::create(DEFAULT_DAEMON_STDERR_FILENAME) {
+                        Ok(stderr) => {
+                            let daemonize = Daemonize::new()
+                                .pid_file("/var/run/accessd.pid")
+                                .stdout(stdout)
+                                .stderr(stderr);
+                            match daemonize.start() {
+                                Ok(_) => {
+                                    println!("accessd starting");
+                                    if let Err(e) = run(
+                                        matches.value_of("state-file").unwrap(),
+                                        matches.value_of("key-data-file").unwrap(),
+                                        matches.value_of("CMD").unwrap(),
+                                        matches
+                                            .value_of("duration")
+                                            .unwrap()
+                                            .parse::<u64>()
+                                            .unwrap(),
+                                    ) {
+                                        println!("failed: {}", e);
+                                    }
+                                }
+                                Err(e) => eprintln!("failed: couldn't daemonize -- {}", e),
+                            };
+                        }
+                        Err(e) => eprintln!(
+                            "failed: couldn't open {} -- {}",
+                            DEFAULT_DAEMON_STDERR_FILENAME, e
+                        ),
+                    },
+                    Err(e) => eprintln!(
+                        "failed: couldn't open {} -- {}",
+                        DEFAULT_DAEMON_STDOUT_FILENAME, e
+                    ),
+                }
+            }
         }
+        Err(()) => eprintln!("failed to init crypto library"),
     }
 }
