@@ -1,8 +1,3 @@
-extern crate access;
-extern crate clap;
-extern crate serde_yaml;
-extern crate sodiumoxide;
-
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;

@@ -1,11 +1,3 @@
-extern crate access;
-extern crate clap;
-extern crate daemonize;
-extern crate futures;
-extern crate sodiumoxide;
-extern crate tokio_core;
-extern crate tokio_process;
-
 use std::cell::RefCell;
 use std::clone::Clone;
 use std::collections::hash_map::Entry::*;

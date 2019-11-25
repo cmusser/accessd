@@ -1,4 +1,4 @@
-use err::AccessError;
+use crate::err::AccessError;
 use sodiumoxide::crypto::box_;
 
 pub fn open<'packet>(

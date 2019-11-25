@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
+use crate::err::AccessError;
 use data_encoding::base16;
-use err::AccessError;
 use serde::{Deserialize, Deserializer, Serializer};
 use sodiumoxide::crypto::box_::{PublicKey, SecretKey};
 use std::collections::HashMap;

@@ -1,10 +1,3 @@
-extern crate access;
-extern crate clap;
-extern crate dirs;
-extern crate futures;
-extern crate sodiumoxide;
-extern crate tokio_core;
-
 use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
@@ -150,6 +143,7 @@ fn main() {
         "{}/.access/keydata.yaml",
         dirs::home_dir().unwrap().display()
     );
+
     let matches = App::new("access")
         .version(crate_version!())
         .author(crate_authors!())
